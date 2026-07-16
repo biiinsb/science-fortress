@@ -345,9 +345,8 @@ var Renderer = (function () {
   // 각도는 대포 입구 앞의 곡선 다이얼 위 손잡이를 끌어 정하고, 힘은 대포 뒤의
   // 손잡이를 당겨 정한다. 두 손잡이가 서로 멀리 떨어져 눈에 보이므로, 무엇을
   // 잡아야 하는지 헷갈리지 않는다.
-  var ARC_R = 100;   // 각도 다이얼 반지름
-  var BREECH = 34;   // 대포 뒤 힘 손잡이의 기본 거리
-  var MAX_PULL = 220; // 뒤로 이만큼 당기면 힘 100
+  var ARC_R = 100;    // 각도 다이얼 반지름
+  var MAX_PULL = 220; // 손잡이 기본 위치에서 이만큼 더 당기면 힘 100
 
   // ui는 작은 화면에서 손잡이를 키우는 배율(Scene.ui). 손잡이 위치도 조금 밀어내
   // 서로 겹치지 않게 한다. 위치 계산을 app과 공유해야 하므로 여기 한 곳에 둔다.
@@ -356,10 +355,15 @@ var Renderer = (function () {
     var r = ARC_R;
     return { x: launch.x + Math.cos(a) * r, y: launch.y - Math.sin(a) * r };
   }
+  /**
+   * 힘 손잡이는 대포 "뒤쪽 위"에 둔다. 포신 반대 방향(뒤아래)에 두면 각도가
+   * 높을 때 손잡이가 땅속으로 들어가고, 화면 아래·왼쪽 끝에 걸려 휴대폰에서
+   * 당길 공간이 없다. 뒤쪽 위는 하늘이라 당길 공간이 넉넉하다.
+   * 각도와 무관하게 고정된 자리에 둬서 매번 같은 곳을 잡으면 되게 했다.
+   */
   function knobPowerRest(launch, angle, ui) {
-    var a = (angle * Math.PI) / 180;
-    var r = BREECH * (ui || 1);
-    return { x: launch.x - Math.cos(a) * r, y: launch.y + Math.sin(a) * r };
+    var u = ui || 1;
+    return { x: launch.x - 30 * u, y: launch.y - 18 * u };
   }
 
   /** 대포 앞 곡선 다이얼(10°~80°) + 현재 각도 손잡이. */

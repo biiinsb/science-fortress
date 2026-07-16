@@ -670,12 +670,16 @@
     S.drag = { mode: 'aim' };
   }
 
-  /** 뒤쪽 손잡이를 당긴 거리로 힘을 정한다. 각도는 그대로. */
+  /**
+   * 손잡이를 당긴 거리로 힘을 정한다. 각도는 그대로.
+   * 방향은 따지지 않고 거리만 본다 — 대포가 화면 왼쪽 아래에 있어 "뒤로"만
+   * 허용하면 휴대폰에서 당길 공간이 없다. 뒤쪽 위(하늘)로 당기면 넉넉하다.
+   */
   function applyPower(pt) {
     var launch = Maps.getMap(S.mapId).launch;
-    // 손잡이 기본 위치(대포 뒤)를 힘 0으로 잡는다. 그 거리는 화면이 좁으면
-    // 손잡이가 커진 만큼 멀어지므로 같은 배율을 반영해야 힘이 튀지 않는다.
-    var rest = 34 * scene.ui();
+    // 손잡이 기본 위치를 힘 0으로 잡는다. 위치 계산은 렌더러와 공유해야
+    // 그림과 값이 어긋나지 않는다.
+    var rest = d2(Renderer.knobPowerRest(launch, S.angle, scene.ui()), launch);
     var pull = d2(pt, launch) - rest;
     S.power = Math.max(1, Math.min(100, Math.round((pull / Renderer.MAX_PULL) * 100)));
     S.drag = { mode: 'power', point: { x: pt.x, y: pt.y } };
