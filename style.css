@@ -32,11 +32,24 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
-#app { min-height: 100%; }
+/* 본문(#app)이 남은 높이를 채우고, 만든이 푸터가 그 아래에 붙는다.
+   #app에 min-height:100%를 주면 푸터가 화면 밖으로 밀려난다. */
+body { display: flex; flex-direction: column; }
+#app { flex: 1 0 auto; }
 
 /* ── 화면 전환 ── */
-.screen { display: none; min-height: 100vh; }
+/* 푸터(만든이) 높이만큼 빼서, 화면을 채우되 푸터가 잘리지 않게 한다 */
+.screen { display: none; min-height: calc(100vh - 38px); }
 .screen.active { display: flex; flex-direction: column; }
+
+/* ── 만든이 ── */
+.credit {
+  text-align: center;
+  padding: 8px 0 14px;
+  font-size: 0.75rem;
+  color: #7891a6;
+  letter-spacing: 0.4px;
+}
 
 /* ── 버튼 공통 ── */
 .btn {
