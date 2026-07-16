@@ -635,8 +635,14 @@
   //   · 대포 뒤 손잡이(힘)를 당기면 → 힘. 당긴 길이가 힘이고, 놓으면 발사.
   // 두 손잡이가 서로 반대편에 떨어져 있어 무엇을 잡는지 분명하다.
 
-  var GRAB_R = 52;        // 손잡이를 잡았다고 볼 반경
+  // 손잡이를 잡았다고 볼 반경. 화면이 좁으면(휴대폰) 손잡이가 커지므로 잡는
+  // 범위도 같이 키운다 — 안 그러면 손가락으로 도저히 잡을 수 없다.
+  var GRAB_R_BASE = 52;
   var MIN_FIRE_POWER = 6;
+
+  function grabR() {
+    return GRAB_R_BASE * scene.ui();
+  }
 
   function worldPoint(evt) {
     var canvas = $('stage');
@@ -667,7 +673,10 @@
   /** 뒤쪽 손잡이를 당긴 거리로 힘을 정한다. 각도는 그대로. */
   function applyPower(pt) {
     var launch = Maps.getMap(S.mapId).launch;
-    var pull = d2(pt, launch) - 30; // 손잡이 기본 위치(대포 뒤 ~30px)를 0으로
+    // 손잡이 기본 위치(대포 뒤)를 힘 0으로 잡는다. 그 거리는 화면이 좁으면
+    // 손잡이가 커진 만큼 멀어지므로 같은 배율을 반영해야 힘이 튀지 않는다.
+    var rest = 34 * scene.ui();
+    var pull = d2(pt, launch) - rest;
     S.power = Math.max(1, Math.min(100, Math.round((pull / Renderer.MAX_PULL) * 100)));
     S.drag = { mode: 'power', point: { x: pt.x, y: pt.y } };
   }
@@ -683,17 +692,19 @@
       evt.preventDefault();
       var pt = worldPoint(evt);
       var launch = Maps.getMap(S.mapId).launch;
-      var aimKnob = Renderer.knobAngle(launch, S.angle);
-      var powerKnob = Renderer.knobPowerRest(launch, S.angle);
+      var ui = scene.ui();
+      var G = grabR();
+      var aimKnob = Renderer.knobAngle(launch, S.angle, ui);
+      var powerKnob = Renderer.knobPowerRest(launch, S.angle, ui);
       var dAim = d2(pt, aimKnob);
       var dPow = d2(pt, powerKnob);
       // 다이얼 호 위를 눌러도 각도를 잡을 수 있게 (더 관대하게)
-      var onArc = Math.abs(d2(pt, launch) - Renderer.ARC_R) <= 30 && pt.x > launch.x;
+      var onArc = Math.abs(d2(pt, launch) - Renderer.ARC_R) <= 30 * ui && pt.x > launch.x;
 
-      if (dPow <= GRAB_R && dPow < dAim) {
+      if (dPow <= G && dPow < dAim) {
         mode = 'power';
         applyPower(pt);
-      } else if (dAim <= GRAB_R || onArc) {
+      } else if (dAim <= G || onArc) {
         mode = 'aim';
         applyAim(pt);
       } else {

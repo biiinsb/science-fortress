@@ -300,14 +300,86 @@ body { display: flex; flex-direction: column; }
 .howto-list { line-height: 1.7; padding-left: 20px; }
 .howto-list li { margin-bottom: 8px; }
 
-/* ── 반응형 (NFR-002 크롬북·태블릿) ── */
-@media (max-width: 720px) {
-  .control-bar { flex-direction: column; align-items: stretch; }
-  .ctrl-fire { flex-direction: row; }
-  .btn-fire { font-size: 1.1rem; }
-  .hud-stat b { font-size: 1.1rem; }
+/* ── 반응형 (NFR-002 크롬북·태블릿·휴대폰) ── */
+
+/* 휴대폰 세로에서만 보이는 회전 안내. 캔버스는 16:9라 세로 화면에서는
+   화면 폭에 갇혀 작을 수밖에 없다. 가로로 돌리면 데스크톱만큼 커진다. */
+.rotate-hint { display: none; }
+
+/* 좁은 화면 전반(휴대폰 세로·가로, 작은 태블릿). 가로로 돌리면 폭이 844px쯤
+   되므로 720px 기준으로는 압축 규칙이 풀려 컨트롤이 다시 세로로 쌓인다. */
+@media (max-width: 900px) {
+  #screen-game { padding: 6px; gap: 6px; }
+
+  /* 컨트롤을 한 줄로 압축해 캔버스에 화면을 최대한 넘긴다.
+     주의: 세로(column) 배치로 바꾸면 자식의 flex-grow가 세로로 작용해
+     발사 버튼이 남은 높이를 다 먹어 거대해진다. 그래서 가로 배치를 유지하고
+     자식은 전부 flex-grow를 끈다. */
+  .control-bar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; }
+  .control-bar > * { flex: 0 0 auto; }
+  .ctrl-fire { flex: 1 1 120px; flex-direction: row; align-items: center; }
+  .btn-fire { font-size: 1.05rem; padding: 11px 14px; }
+  .btn-small { padding: 6px 9px; font-size: 0.78rem; }
+  .fine-tune { flex: 1 0 100%; }
+  .ctrl label { font-size: 0.78rem; margin-bottom: 3px; }
+  .proj-btn { min-width: 46px; padding: 7px 8px; font-size: 0.75rem; }
+
+  /* HUD·안내문을 줄여 캔버스 높이를 벌어준다 */
+  .hud-stat { padding: 4px 10px; }
+  .hud-stat b { font-size: 1.05rem; }
+  .hud-stat span { font-size: 0.58rem; }
+  .hud-map { font-size: 0.95rem; }
+  .hud-env { font-size: 0.72rem; }
+  .drag-hint { font-size: 0.74rem; padding: 6px 8px; line-height: 1.45; }
+  #stage { border-width: 3px; border-radius: 10px; }
+
   .game-title { font-size: 1.6rem; }
   .rank-register input { width: 80%; }
+}
+
+/* 휴대폰 세로 — 캔버스가 작을 수밖에 없으니 가로 전환을 권한다.
+   월드는 960px 폭을 전부 보여줘야 해서(대포 왼쪽 끝, 과녁 오른쪽 끝) 캔버스
+   배율이 화면 폭에 갇힌다. 그래서 폭을 끝까지 쓰고, 남는 세로 공간에 내용을
+   가운데 두어 화면이 비어 보이지 않게 한다. */
+@media (max-width: 720px) and (orientation: portrait) {
+  #screen-game { justify-content: center; padding: 6px 0; }
+  .hud-top, .game-topbar { padding: 0 8px; }
+  .control-bar, .drag-hint, .rotate-hint { margin: 0 6px; width: auto; }
+  #stage { border-radius: 8px; }
+
+  .rotate-hint {
+    display: block;
+    width: 100%; max-width: 980px;
+    margin: 0; order: 2;
+    text-align: center; font-size: 0.76rem; color: #35597a;
+    background: #eef6fc; border: 2px dashed var(--accent2);
+    border-radius: 10px; padding: 6px 10px;
+  }
+}
+
+/* 큰 화면은 원래 크기 그대로 둔다 — 데스크톱에서는 이미 적당하다 */
+@media (min-width: 901px) {
+  .rotate-hint { display: none; }
+}
+
+/* 휴대폰 가로 — 캔버스를 화면 높이에 맞춰 최대로 키운다.
+   width가 아니라 height를 기준으로 잡아야 16:9가 깨지지 않는다
+   (렌더러가 폭 기준으로 배율을 잡으므로 비율이 어긋나면 그림이 잘린다). */
+@media (max-width: 900px) and (orientation: landscape) {
+  #screen-game { padding: 4px; gap: 4px; }
+  /* 세로 공간이 절대적으로 부족하다. 안내문·푸터를 접어 캔버스에 넘긴다 */
+  .drag-hint { display: none; }
+  .credit { padding: 2px 0 4px; font-size: 0.66rem; }
+  .screen { min-height: calc(100vh - 22px); }
+  .stage-wrap { display: flex; justify-content: center; }
+  #stage {
+    width: auto;
+    height: min(66vh, calc((100vw - 16px) * 0.5625));
+  }
+  .control-bar { padding: 7px 10px; gap: 7px; }
+  .btn-fire { font-size: 1rem; padding: 9px 12px; }
+  /* 그만두기는 남겨야 게임을 나갈 수 있다. 설명만 숨긴다 */
+  .proj-desc { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

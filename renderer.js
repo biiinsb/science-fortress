@@ -44,6 +44,17 @@ var Renderer = (function () {
     ctx.clearRect(0, 0, W, H);
   };
 
+  /**
+   * UI 확대 배율. 월드는 960px 폭으로 고정이라 화면이 좁을수록 배율이 작아진다
+   * (데스크톱 980px → 약 1.0, 휴대폰 390px → 0.41). 그대로 두면 조준 손잡이가
+   * 화면에서 4~5px밖에 안 돼 손가락으로 잡을 수 없다. 그래서 캔버스가 작을수록
+   * 손잡이·글자를 월드 기준으로 키워, 화면에서의 크기를 비슷하게 유지한다.
+   * 물리에 묶인 것(목표물 반지름)은 절대 건드리지 않는다 — 판정과 어긋난다.
+   */
+  Scene.prototype.ui = function () {
+    return Math.max(1, Math.min(2.1, 0.85 / this.scale));
+  };
+
   // ─── 배경 ──────────────────────────────────────────────
 
   function drawSky(ctx) {
@@ -214,50 +225,56 @@ var Renderer = (function () {
 
   // ─── 바람 표시 (PDF p.5 좌상단, PRD 14.3 화살표) ─────────
 
-  function drawWind(ctx, wind, label) {
+  function drawWind(ctx, wind, label, ui) {
     // 좌상단 바람 표시 상자. 화살표로 방향을, 점 개수/숫자로 세기를 보여준다
     // (수정사항 4). 풍속은 게임 세기 1~5로, m/s 같은 물리 단위는 쓰지 않는다.
-    var boxX = 16, boxY = 16, boxW = 150, boxH = 58;
+    ui = ui || 1;
+    var boxX = 16, boxY = 16, boxW = 150 * ui, boxH = 58 * ui;
+    ctx.save();
+    ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(255,255,255,0.82)';
     ctx.strokeStyle = '#2b7fb8';
-    ctx.lineWidth = 2;
-    roundRect(ctx, boxX, boxY, boxW, boxH, 10);
+    ctx.lineWidth = 2 * ui;
+    roundRect(ctx, boxX, boxY, boxW, boxH, 10 * ui);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = '#1c3d5a';
-    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.font = 'bold ' + Math.round(15 * ui) + 'px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
 
     var mag = Math.sqrt(wind.x * wind.x + wind.y * wind.y);
     if (mag < 0.05) {
-      ctx.fillText('바람 없음', boxX + 14, boxY + boxH / 2);
+      ctx.fillText('바람 없음', boxX + 14 * ui, boxY + boxH / 2);
+      ctx.restore();
       return;
     }
 
-    var cx = boxX + 28, cy = boxY + boxH / 2;
+    var cx = boxX + 28 * ui, cy = boxY + boxH / 2;
     var ux = wind.x / mag, uy = wind.y / mag;
-    var len = 30;
+    var len = 30 * ui;
     ctx.strokeStyle = '#2b7fb8';
     ctx.fillStyle = '#2b7fb8';
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 4 * ui;
     ctx.beginPath();
     ctx.moveTo(cx - ux * len / 2, cy - uy * len / 2);
     ctx.lineTo(cx + ux * len / 2, cy + uy * len / 2);
     ctx.stroke();
     var hx = cx + ux * len / 2, hy = cy + uy * len / 2;
     var pa = Math.atan2(uy, ux);
+    var ah = 11 * ui;
     ctx.beginPath();
     ctx.moveTo(hx, hy);
-    ctx.lineTo(hx - 11 * Math.cos(pa - 0.5), hy - 11 * Math.sin(pa - 0.5));
-    ctx.lineTo(hx - 11 * Math.cos(pa + 0.5), hy - 11 * Math.sin(pa + 0.5));
+    ctx.lineTo(hx - ah * Math.cos(pa - 0.5), hy - ah * Math.sin(pa - 0.5));
+    ctx.lineTo(hx - ah * Math.cos(pa + 0.5), hy - ah * Math.sin(pa + 0.5));
     ctx.closePath();
     ctx.fill();
 
     ctx.fillStyle = '#1c3d5a';
-    ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.font = 'bold ' + Math.round(14 * ui) + 'px system-ui, sans-serif';
     var txt = (label && label.strength ? label.strength : '') + ' · 풍속 ' + (label ? label.level : '?');
-    ctx.fillText(txt, boxX + 52, boxY + boxH / 2);
+    ctx.fillText(txt, boxX + 52 * ui, boxY + boxH / 2);
+    ctx.restore();
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -332,21 +349,26 @@ var Renderer = (function () {
   var BREECH = 34;   // 대포 뒤 힘 손잡이의 기본 거리
   var MAX_PULL = 220; // 뒤로 이만큼 당기면 힘 100
 
-  function knobAngle(launch, angle) {
+  // ui는 작은 화면에서 손잡이를 키우는 배율(Scene.ui). 손잡이 위치도 조금 밀어내
+  // 서로 겹치지 않게 한다. 위치 계산을 app과 공유해야 하므로 여기 한 곳에 둔다.
+  function knobAngle(launch, angle, ui) {
     var a = (angle * Math.PI) / 180;
-    return { x: launch.x + Math.cos(a) * ARC_R, y: launch.y - Math.sin(a) * ARC_R };
+    var r = ARC_R;
+    return { x: launch.x + Math.cos(a) * r, y: launch.y - Math.sin(a) * r };
   }
-  function knobPowerRest(launch, angle) {
+  function knobPowerRest(launch, angle, ui) {
     var a = (angle * Math.PI) / 180;
-    return { x: launch.x - Math.cos(a) * BREECH, y: launch.y + Math.sin(a) * BREECH };
+    var r = BREECH * (ui || 1);
+    return { x: launch.x - Math.cos(a) * r, y: launch.y + Math.sin(a) * r };
   }
 
   /** 대포 앞 곡선 다이얼(10°~80°) + 현재 각도 손잡이. */
-  function drawAngleDial(ctx, launch, angle, active) {
+  function drawAngleDial(ctx, launch, angle, active, ui) {
+    ui = ui || 1;
     ctx.save();
     // 눈금 호
     ctx.strokeStyle = active ? '#2b7fb8' : 'rgba(43,127,184,0.5)';
-    ctx.lineWidth = active ? 4 : 3;
+    ctx.lineWidth = (active ? 4 : 3) * ui;
     ctx.beginPath();
     for (var a = 10; a <= 80; a += 1) {
       var r = (a * Math.PI) / 180;
@@ -357,30 +379,32 @@ var Renderer = (function () {
     }
     ctx.stroke();
     // 굵은 눈금 (20° 간격)
-    ctx.lineWidth = 2;
+    var tick = 7 * ui;
+    ctx.lineWidth = 2 * ui;
     for (var t = 20; t <= 80; t += 20) {
       var rr = (t * Math.PI) / 180;
-      var ix = launch.x + Math.cos(rr) * (ARC_R - 7);
-      var iy = launch.y - Math.sin(rr) * (ARC_R - 7);
-      var ox = launch.x + Math.cos(rr) * (ARC_R + 7);
-      var oy = launch.y - Math.sin(rr) * (ARC_R + 7);
+      var ix = launch.x + Math.cos(rr) * (ARC_R - tick);
+      var iy = launch.y - Math.sin(rr) * (ARC_R - tick);
+      var ox = launch.x + Math.cos(rr) * (ARC_R + tick);
+      var oy = launch.y - Math.sin(rr) * (ARC_R + tick);
       ctx.beginPath();
       ctx.moveTo(ix, iy);
       ctx.lineTo(ox, oy);
       ctx.stroke();
     }
     // 손잡이
-    var k = knobAngle(launch, angle);
+    var k = knobAngle(launch, angle, ui);
+    var kr = (active ? 14 : 11) * ui;
     ctx.fillStyle = active ? '#2b7fb8' : '#5a9fca';
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 * ui;
     ctx.beginPath();
-    ctx.arc(k.x, k.y, active ? 14 : 11, 0, Math.PI * 2);
+    ctx.arc(k.x, k.y, kr, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     // 위·아래 화살표로 조작 가능함을 암시
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.font = 'bold ' + Math.round(12 * ui) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('↕', k.x, k.y);
@@ -388,16 +412,17 @@ var Renderer = (function () {
   }
 
   /** 대포 뒤 힘 손잡이. 당기는 중이면 당긴 지점까지 밴드 + 충전 게이지. */
-  function drawPowerControl(ctx, launch, angle, power, mode, dragPoint) {
+  function drawPowerControl(ctx, launch, angle, power, mode, dragPoint, ui) {
+    ui = ui || 1;
     ctx.save();
-    var rest = knobPowerRest(launch, angle);
+    var rest = knobPowerRest(launch, angle, ui);
     var handle = mode === 'power' && dragPoint ? dragPoint : rest;
 
     // 당기는 중이면 대포 뒤에서 손잡이까지 굵은 고무줄
     if (mode === 'power') {
       ctx.strokeStyle = 'rgba(232,68,46,0.75)';
-      ctx.lineWidth = 5;
-      ctx.setLineDash([7, 5]);
+      ctx.lineWidth = 5 * ui;
+      ctx.setLineDash([7 * ui, 5 * ui]);
       ctx.beginPath();
       ctx.moveTo(launch.x, launch.y);
       ctx.lineTo(handle.x, handle.y);
@@ -407,13 +432,13 @@ var Renderer = (function () {
     // 손잡이
     ctx.fillStyle = mode === 'power' ? '#e8442e' : '#c86a4a';
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 * ui;
     ctx.beginPath();
-    ctx.arc(handle.x, handle.y, mode === 'power' ? 13 : 11, 0, Math.PI * 2);
+    ctx.arc(handle.x, handle.y, (mode === 'power' ? 13 : 11) * ui, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.font = 'bold ' + Math.round(12 * ui) + 'px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('힘', handle.x, handle.y);
@@ -422,13 +447,13 @@ var Renderer = (function () {
     // 충전 게이지 — 대포 뒤쪽(왼쪽) 위로 세로 막대. 대포 입구·다이얼은 오른쪽
     // 위에, 힘 당김은 대개 뒤아래에 있으므로 이 자리는 둘 다 가리지 않는다.
     if (mode === 'power') {
-      var barW = 14, barH = 150;
-      var barX = launch.x - 34 - barW;
+      var barW = 14 * ui, barH = 150;
+      var barX = launch.x - 34 * ui - barW;
       var barBottom = launch.y - 4;
       var top = barBottom - barH;
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.strokeStyle = '#1c3d5a';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * ui;
       roundRect(ctx, barX, top, barW, barH, 6);
       ctx.fill();
       ctx.stroke();
@@ -446,22 +471,24 @@ var Renderer = (function () {
    * 각도·힘 숫자 판. 대포 입구를 가리지 않도록 화면 좌상단(바람 상자 아래)에
    * 고정한다 (수정사항: 박스가 대포를 가려 조준이 어려웠던 문제).
    */
-  function drawReadout(ctx, angle, power, showPower, mode) {
-    var x = 16, y = 84, w = 176, h = 32;
+  function drawReadout(ctx, angle, power, showPower, mode, ui) {
+    ui = ui || 1;
+    var x = 16, y = 84 * ui, w = 176 * ui, h = 32 * ui;
     ctx.save();
+    ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(16,35,58,0.9)';
-    roundRect(ctx, x, y, w, h, 9);
+    roundRect(ctx, x, y, w, h, 9 * ui);
     ctx.fill();
     ctx.textBaseline = 'middle';
-    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.font = 'bold ' + Math.round(15 * ui) + 'px system-ui, sans-serif';
     ctx.fillStyle = '#ffe08a';
     var txt = '각도 ' + angle + '°   힘 ' + power;
-    ctx.fillText(txt, x + 12, y + h / 2);
+    ctx.fillText(txt, x + 12 * ui, y + h / 2);
     // 현재 조절 중인 축을 작은 점으로 강조
     if (mode) {
       ctx.fillStyle = mode === 'aim' ? '#7fd0ff' : '#ff9a3d';
       ctx.beginPath();
-      ctx.arc(x + w - 14, y + h / 2, 5, 0, Math.PI * 2);
+      ctx.arc(x + w - 14 * ui, y + h / 2, 5 * ui, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
@@ -527,16 +554,19 @@ var Renderer = (function () {
       drawPath(ctx, scene.currentPath, '#f4b21a', scene.projectileIndex + 1, true);
     }
 
+    // 화면이 좁을수록(휴대폰) UI를 키워 손가락으로 잡을 수 있게 한다
+    var ui = this.ui();
+
     drawCannon(ctx, map.launch, scene.angle);
-    drawWind(ctx, scene.wind, scene.windLabel);
+    drawWind(ctx, scene.wind, scene.windLabel, ui);
 
     // 조준 컨트롤: 앞쪽 각도 다이얼 + 뒤쪽 힘 손잡이 (발사 중이 아닐 때)
     var mode = scene.drag ? scene.drag.mode : null;
     if (!scene.currentPath) {
-      drawAngleDial(ctx, map.launch, scene.angle, mode === 'aim');
-      drawPowerControl(ctx, map.launch, scene.angle, scene.power, mode, scene.drag && scene.drag.point);
+      drawAngleDial(ctx, map.launch, scene.angle, mode === 'aim', ui);
+      drawPowerControl(ctx, map.launch, scene.angle, scene.power, mode, scene.drag && scene.drag.point, ui);
       // 각도·힘 숫자 판 — 좌상단 고정 (대포 입구를 가리지 않는다)
-      drawReadout(ctx, scene.angle, scene.power, mode === 'power', mode);
+      drawReadout(ctx, scene.angle, scene.power, mode === 'power', mode, ui);
     }
 
     if (scene.projectilePos) drawProjectile(ctx, scene.projectilePos, scene.projectile);
