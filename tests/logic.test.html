@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>scoring · diagnose 테스트</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; padding: 24px; max-width: 900px; }
+  .pass { color: #0a7d32; } .fail { color: #c0182b; }
+  h1 { font-size: 20px; } h2 { font-size: 15px; margin: 18px 0 4px; color: #555; }
+  p { margin: 2px 0; }
+</style>
+</head>
+<body>
+<div id="out"></div>
+
+<script src="../physics.js"></script>
+<script src="../maps.js"></script>
+<script src="../scoring.js"></script>
+<script src="../feedback.js"></script>
+<script src="../diagnose.js"></script>
+<script src="harness.js"></script>
+<script>
+'use strict';
+
+// ══ scoring.js ══════════════════════════════════════════
+
+T.describe('정확도 구간 — PRD 10.4');
+(function () {
+  T.eq(Scoring.accuracyBonus(1.0), 500, '중심 명중 +500');
+  T.eq(Scoring.accuracyBonus(0.85), 500, '정확도 0.85는 중심 구간');
+  T.eq(Scoring.accuracyBonus(0.6), 300, '정확도 0.6은 안쪽 구간 +300');
+  T.eq(Scoring.accuracyBonus(0.2), 100, '정확도 0.2는 가장자리 +100');
+  T.eq(Scoring.accuracyBonus(0), 0, '빗나감 +0');
+  T.eq(Scoring.accuracyPercent(0.923), 92, 'PRD 16.1 백분율 표기 — 0.923 → 92');
+})();
+
+T.describe('맵 점수 — PRD 10.6 공식 ((기본+남은×100+정확도)×배율)');
+(function () {
+  // Level 1, 5회 남김, 중심 명중: (1000 + 500 + 500) × 1.0 = 2000
+  T.eq(Scoring.mapScore({ shotsLeft: 5, accuracy: 1.0, level: 1 }), 2000, 'L1 만점 = 2000');
+  // Level 5 배율 1.5: (1000 + 300 + 500) × 1.5 = 2700
+  T.eq(Scoring.mapScore({ shotsLeft: 3, accuracy: 1.0, level: 5 }), 2700, 'L5 배율이 곱해진다');
+  // 분석 보너스 포함: (1000 + 200 + 300 + 200) × 1.0 = 1700
+  T.eq(Scoring.mapScore({ shotsLeft: 2, accuracy: 0.5, level: 1, analysis: true }), 1700, '분석 보너스 +200 포함');
+  // 남은 횟수가 음수여도 0으로 막는다
+  T.eq(Scoring.mapScore({ shotsLeft: -1, accuracy: 1.0, level: 1 }), 1500, '남은 횟수 음수는 0 취급');
+})();
+
+T.describe('breakdown — 요소 합이 총점과 맞는다');
+(function () {
+  var b = Scoring.breakdown({ shotsLeft: 4, accuracy: 1.0, level: 3, analysis: true });
+  var sum = 0;
+  for (var i = 0; i < b.rows.length; i++) sum += b.rows[i].value;
+  T.eq(sum, b.subtotal, '행 합계 = 소계');
+  T.eq(Math.round(b.subtotal * b.multiplier), b.total, '소계 × 배율 = 총점');
+  T.eq(b.multiplier, 1.2, 'L3 배율 1.2');
+})();
+
+T.describe('총점 — 연속 클리어 보너스는 총점에만 (PRD 10.6)');
+(function () {
+  T.eq(Scoring.total([2000, 1500, 1500, 1500, 1500], true), 10000, '5맵 클리어 + 보너스 2000');
+  T.eq(Scoring.total([2000, 1500, 1500, 1500, 1500], false), 8000, '일부만 클리어면 보너스 없음');
+  T.eq(Scoring.total([2000, 0, 1500, 0, 0], false), 3500, '실패한 맵은 0점');
+})();
+
+T.describe('분석 보너스 — 조건을 딱 하나만 바꿔 성공했을 때 (개발 계획서 5절)');
+(function () {
+  var prev = { angle: 45, power: 60, projectileId: 'round' };
+  T.eq(Scoring.countChanges(prev, { angle: 50, power: 60, projectileId: 'round' }), 1, '각도만 바꿈 = 1');
+  T.eq(Scoring.countChanges(prev, { angle: 50, power: 70, projectileId: 'round' }), 2, '둘 바꿈 = 2');
+  T.eq(Scoring.analysisBonus(prev, { angle: 50, power: 60, projectileId: 'round' }), 200, '하나만 바꾸면 +200');
+  T.eq(Scoring.analysisBonus(prev, { angle: 50, power: 70, projectileId: 'round' }), 0, '둘 바꾸면 0 (변인 통제 아님)');
+  T.eq(Scoring.analysisBonus(null, prev), 0, '첫 발사는 비교 대상 없음 → 0');
+})();
+
+// ══ diagnose.js ═════════════════════════════════════════
+// 반사실 진단이 원인을 실제로 맞히는지 본다. 각 시나리오를 물리로 만들고,
+// 진단이 우리가 심은 원인을 지목하는지 확인한다.
+
+function shoot(mapId, level, projId, angle, power, envOver) {
+  var cond = Maps.buildCondition({
+    mapId: mapId, level: level, projectileId: projId,
+    angle: angle, power: power, env: envOver
+  });
+  return { cond: cond, result: Physics.simulate(cond) };
+}
+
+T.describe('진단 — 명중은 성공으로 판정한다');
+(function () {
+  // Map 1에서 명중하는 발사를 격자로 찾는다
+  var found = null;
+  for (var a = 40; a <= 70 && !found; a += 2) {
+    for (var p = 40; p <= 90; p += 2) {
+      var s = shoot(1, 3, 'round', a, p);
+      if (s.result.hit) { found = s; break; }
+    }
+  }
+  T.ok(found !== null, 'Map 1에 명중 발사가 존재한다');
+  var d = Diagnose.diagnose(found.cond, found.result);
+  T.ok(d.code === 'success' || d.code === 'successCenter', '명중을 성공으로 진단한다');
+})();
+
+T.describe('진단 — 너무 약하면 tooWeak (환경 없는 Map 1)');
+(function () {
+  var s = shoot(1, 3, 'round', 45, 25); // 한참 짧게
+  var d = Diagnose.diagnose(s.cond, s.result);
+  T.ok(!s.result.hit, '약한 발사는 빗나간다');
+  T.eq(d.code, 'tooWeak', '짧게 떨어지면 힘 부족으로 진단한다');
+})();
+
+T.describe('진단 — 화면 밖으로 나가면 outOfBounds');
+(function () {
+  var s = shoot(1, 3, 'round', 45, 100);
+  T.eq(s.result.outcome, 'out', '최대 힘·45°는 화면 밖으로');
+  var d = Diagnose.diagnose(s.cond, s.result);
+  T.eq(d.code, 'outOfBounds', '화면 밖 이탈을 진단한다');
+})();
+
+// 바람 진단은 Maps를 거치지 않고 조건을 직접 만들어 격리한다.
+//   - Map 3은 절벽이라 빗난 탄환이 화면 밖으로 나가버려 'stopped' 빗나감이 없다.
+//   - 평지에서도 바람이 지면 마찰보다 세면(2.2 등) 탄환이 굴러 나가 runaway가
+//     된다. 바람 1.2는 마찰이 이겨 탄환이 땅에 얹혀 멈춘다.
+// 넓은 평지에 중앙 목표를 둬서, 바람이 밀어낸 빗나감이 화면 안에서 정지하게 한다.
+function directCond(over) {
+  var c = {
+    launch: { x: 80, y: 470 },
+    angle: 45, power: 60,
+    projectile: Maps.getProjectile('round'),
+    gravity: 9.8,
+    wind: { x: 0, y: 0 }, airResistance: 0, frictionScale: 1,
+    terrain: [{ x: -200, y: 470, surface: 'plain' }, { x: 1600, y: 470, surface: 'plain' }],
+    obstacles: [],
+    target: { x: 460, y: 470 - 26, r: 26 }
+  };
+  for (var k in over) c[k] = over[k];
+  return c;
+}
+
+T.describe('진단 — 우풍이 주범이면 바람을 지목한다');
+(function () {
+  // 우풍은 탄환을 오른쪽으로 밀어 오버슈트시킨다. 화면 끝(x≈980)을 넘어 굴러
+  // 나가지 않도록 목표를 가깝게(340) 두고 바람을 약하게(0.9) 준다.
+  var picked = null;
+  for (var a = 30; a <= 70 && !picked; a += 2) {
+    for (var p = 18; p <= 60; p += 2) {
+      var windy = directCond({ angle: a, power: p, wind: { x: 0.9, y: 0 }, target: { x: 340, y: 444, r: 26 } });
+      var calm = directCond({ angle: a, power: p, wind: { x: 0, y: 0 }, target: { x: 340, y: 444, r: 26 } });
+      var rw = Physics.simulate(windy), rc = Physics.simulate(calm);
+      if (!rw.hit && rw.outcome === 'stopped' && rc.hit) {
+        picked = { cond: windy, result: rw }; break;
+      }
+    }
+  }
+  T.ok(picked !== null, '우풍만 없었으면 맞았을 발사가 존재한다');
+  if (picked) {
+    var d = Diagnose.diagnose(picked.cond, picked.result);
+    T.eq(d.code, 'windRight', '우풍으로 밀려 빗난 발사를 바람 탓으로 진단한다');
+    T.ok(d.blame && d.blame.wind >= Diagnose.BLAME_THRESHOLD, '바람 기여도가 임계값을 넘는다');
+  }
+})();
+
+T.describe('진단 — 좌풍이면 왼쪽 바람을 지목한다');
+(function () {
+  var picked = null;
+  for (var a = 30; a <= 70 && !picked; a += 2) {
+    for (var p = 20; p <= 80; p += 2) {
+      var windy = directCond({ angle: a, power: p, wind: { x: -1.2, y: 0 } });
+      var calm = directCond({ angle: a, power: p, wind: { x: 0, y: 0 } });
+      var rw = Physics.simulate(windy), rc = Physics.simulate(calm);
+      if (!rw.hit && rw.outcome === 'stopped' && rc.hit) {
+        picked = { cond: windy, result: rw }; break;
+      }
+    }
+  }
+  T.ok(picked !== null, '좌풍만 없었으면 맞았을 발사가 존재한다');
+  if (picked) T.eq(Diagnose.diagnose(picked.cond, picked.result).code, 'windLeft', '좌풍으로 빗난 발사를 왼쪽 바람 탓으로 진단한다');
+})();
+
+T.describe('진단 — 공기 저항이 주범이면 저항을 지목한다');
+(function () {
+  var picked = null;
+  for (var a = 38; a <= 72 && !picked; a += 2) {
+    for (var p = 50; p <= 96; p += 2) {
+      var drag = shoot(1, 3, 'round', a, p, { airResistance: 0.05, wind: { x: 0, y: 0 }, frictionScale: 1 });
+      var noDrag = shoot(1, 3, 'round', a, p, { airResistance: 0, wind: { x: 0, y: 0 }, frictionScale: 1 });
+      if (!drag.result.hit && drag.result.outcome === 'stopped' && noDrag.result.hit) {
+        picked = drag; break;
+      }
+    }
+  }
+  T.ok(picked !== null, '공기 저항만 없었으면 맞았을 발사가 존재한다');
+  if (picked) {
+    var d = Diagnose.diagnose(picked.cond, picked.result);
+    T.eq(d.code, 'highAirResistance', '저항으로 짧아진 발사를 저항 탓으로 진단한다');
+  }
+})();
+
+T.describe('리스폰 랜덤화 — 같은 seed는 같은 조건, 다른 seed는 다른 조건 (수정사항 4)');
+(function () {
+  var a1 = Maps.rollConditions(3, Maps.makeRng(42));
+  var a2 = Maps.rollConditions(3, Maps.makeRng(42));
+  T.eq(a1.target.x, a2.target.x, '같은 seed는 같은 목표 위치를 준다 (재현 가능)');
+  T.eq(a1.windBase.x, a2.windBase.x, '같은 seed는 같은 바람을 준다');
+
+  var seen = {};
+  var distinct = 0;
+  for (var s = 0; s < 12; s++) {
+    var roll = Maps.rollConditions(3, Maps.makeRng(s * 1000 + 1));
+    var key = roll.target.x + '|' + roll.windBase.x + '|' + roll.windBase.y;
+    if (!seen[key]) { seen[key] = true; distinct++; }
+  }
+  T.ok(distinct >= 8, 'seed를 바꾸면 조건이 실제로 다양해진다 (' + distinct + '/12 고유)');
+
+  // 목표물은 항상 지면에서 띄워져 있어(수정사항 1) 굴러서는 닿지 못한다
+  var roll1 = Maps.rollConditions(1, Maps.makeRng(7));
+  var groundY = Maps.getMap(1).rand.groundY;
+  T.ok(groundY - roll1.target.y >= 40, '목표물 바닥이 지면보다 충분히 높다 (굴러서 닿지 못함)');
+})();
+
+T.describe('진단 — 장애물에 부딪히면 장애물로 진단한다 (Map 5 방어벽)');
+(function () {
+  var s = shoot(5, 3, 'round', 18, 70); // 낮게 쏴서 벽에 맞힌다
+  T.eq(s.result.outcome, 'obstacle', '낮은 발사는 벽에 부딪힌다');
+  var d = Diagnose.diagnose(s.cond, s.result);
+  T.ok(d.code === 'obstacle' || d.code === 'obstacleLow', '장애물 충돌로 진단한다');
+})();
+
+T.describe('진단 — 모든 원인 코드가 feedback.js에 문구를 가진다');
+(function () {
+  var codes = ['success', 'successCenter', 'tooWeak', 'tooStrong', 'angleTooLow',
+    'angleTooHigh', 'windLeft', 'windRight', 'windUp', 'windDown', 'highFriction',
+    'highAirResistance', 'obstacle', 'obstacleLow', 'fell', 'outOfBounds'];
+  var ok = true;
+  for (var i = 0; i < codes.length; i++) {
+    if (!Feedback.MESSAGES[codes[i]]) { ok = false; T.ok(false, codes[i] + ' 문구 없음'); }
+  }
+  T.ok(ok, '16개 원인 코드 모두 메시지가 있다');
+})();
+
+T.describe('교육과정 금지어가 문구에 없다 (PRD 2.3, 개발 계획서 6절)');
+(function () {
+  var banned = ['벡터', '삼각', 'sin', 'cos', '가속도', '성분', '공식', '방정식', 'm/s', '제곱'];
+  var all = [];
+  for (var k in Feedback.MESSAGES) all.push(Feedback.MESSAGES[k]);
+  for (var h in Feedback.HINTS) all.push(Feedback.HINTS[h]);
+  var text = all.join(' ');
+  var clean = true;
+  for (var i = 0; i < banned.length; i++) {
+    if (text.indexOf(banned[i]) !== -1) { clean = false; T.ok(false, '금지어 "' + banned[i] + '" 발견'); }
+  }
+  T.ok(clean, banned.length + '개 금지어가 학생 문구에 없다');
+})();
+
+T.report();
+</script>
+</body>
+</html>

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>과학 포트리스: 힘과 운동 미션</title>
+<meta name="description" content="발사 각도·힘·질량·바람·마찰·공기 저항을 조절해 목표물을 맞히는 중학교 과학 교육용 2D 포트리스 게임.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ═══ 메인 메뉴 (FR-001, PDF p.1·p.9) ═══ -->
+  <section id="screen-menu" class="screen active">
+    <div class="menu-box">
+      <h1 class="game-title">과학 포트리스<span>: 힘과 운동 미션</span></h1>
+      <p class="game-sub">중학교 과학 교육을 위한 2D 물리 시뮬레이션</p>
+      <div class="menu-buttons">
+        <button class="btn btn-mode" data-mode="stage">스테이지 모드</button>
+        <button class="btn btn-mode" data-mode="practice">연습 모드</button>
+        <button class="btn btn-mode" data-mode="challenge">챌린지 모드</button>
+        <button class="btn btn-mode" data-mode="teacher">교사용 시연</button>
+        <button class="btn btn-sub" id="btn-ranking">명예의 전당</button>
+        <button class="btn btn-sub" id="btn-howto">조작 방법</button>
+      </div>
+      <label class="sound-toggle">
+        <input type="checkbox" id="chk-sound" checked> 소리
+      </label>
+    </div>
+  </section>
+
+  <!-- ═══ 설정 (맵·난이도·탄환 선택) ═══ -->
+  <section id="screen-setup" class="screen">
+    <div class="setup-box">
+      <h2 id="setup-title">스테이지 모드</h2>
+      <div class="setup-group" id="setup-map-group">
+        <h3>맵 선택</h3>
+        <div class="chip-row" id="setup-maps"></div>
+      </div>
+      <div class="setup-group">
+        <h3>난이도</h3>
+        <div class="chip-row" id="setup-diffs"></div>
+        <p class="setup-hint" id="setup-diff-desc"></p>
+      </div>
+      <div class="setup-actions">
+        <button class="btn btn-sub" data-back="menu">← 뒤로</button>
+        <button class="btn btn-go" id="btn-start-game">시작하기</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 게임 화면 (PDF p.5) ═══ -->
+  <section id="screen-game" class="screen">
+    <div class="hud-top">
+      <div class="hud-left">
+        <span class="hud-map" id="hud-map">Map 1</span>
+        <span class="hud-env" id="hud-env"></span>
+      </div>
+      <div class="hud-right">
+        <div class="hud-stat"><span>SCORE</span><b id="hud-score">0</b></div>
+        <div class="hud-stat"><span>SHOTS LEFT</span><b id="hud-shots">5</b></div>
+      </div>
+    </div>
+
+    <div class="stage-wrap">
+      <canvas id="stage" width="960" height="540"></canvas>
+      <div class="feedback-bubble" id="feedback-bubble" hidden></div>
+    </div>
+
+    <!-- 조작 안내: 앞쪽 각도 다이얼 + 뒤쪽 힘 손잡이 -->
+    <p class="drag-hint">🎯 ① 대포 앞 <b>다이얼(↕)</b>을 끌어 각도를 맞추고 &nbsp; ② 대포 뒤 <b>힘 손잡이</b>를 당겼다 놓으면 발사됩니다.</p>
+
+    <!-- 하단 통합 컨트롤 바 (PDF p.5) -->
+    <div class="control-bar">
+      <div class="ctrl ctrl-proj">
+        <label>탄환</label>
+        <div class="proj-buttons" id="proj-buttons"></div>
+      </div>
+      <div class="ctrl ctrl-fire">
+        <button class="btn btn-fire" id="btn-fire">발사!</button>
+        <button class="btn btn-sub btn-small" id="btn-predict" hidden>예측선</button>
+      </div>
+      <!-- 정밀 조절·키보드 접근성용 슬라이더 (NFR-001). 드래그가 주 조작이다. -->
+      <details class="fine-tune">
+        <summary>정밀 조절</summary>
+        <div class="ctrl ctrl-slider">
+          <label for="angle">발사 각도 <b><span id="angle-val">45</span>°</b></label>
+          <input type="range" id="angle" min="10" max="80" value="45" step="1">
+        </div>
+        <div class="ctrl ctrl-slider">
+          <label for="power">발사 힘 <b><span id="power-val">50</span></b></label>
+          <input type="range" id="power" min="1" max="100" value="50" step="1">
+        </div>
+      </details>
+    </div>
+
+    <div class="game-topbar">
+      <button class="btn btn-sub btn-small" id="btn-quit">그만두기</button>
+      <button class="btn btn-sub btn-small" id="btn-retry-map" hidden>맵 다시</button>
+      <span class="proj-desc" id="proj-desc"></span>
+    </div>
+
+    <!-- 교사용 시연 패널 (PRD 5.4) — 시연 모드에서만 표시 -->
+    <div class="teacher-panel" id="teacher-panel" hidden>
+      <h4>교사용 조건 강제</h4>
+      <div class="teacher-controls">
+        <label>바람 <select id="t-wind">
+          <option value="0">없음</option>
+          <option value="left">좌풍</option>
+          <option value="right">우풍</option>
+          <option value="up">상승기류</option>
+          <option value="down">하강기류</option>
+        </select></label>
+        <label>마찰 <select id="t-fric">
+          <option value="1">보통</option>
+          <option value="0">없음</option>
+          <option value="2">크게</option>
+        </select></label>
+        <label>공기 저항 <select id="t-air">
+          <option value="0">없음</option>
+          <option value="0.02">작음</option>
+          <option value="0.04">큼</option>
+        </select></label>
+      </div>
+      <p class="teacher-hint">같은 각도·힘으로 조건만 바꿔 발사하며 비교해 보세요. 지난 궤적이 함께 남습니다.</p>
+    </div>
+  </section>
+</div>
+
+<!-- ═══ 결과 모달 (§13.3) ═══ -->
+<div class="modal" id="modal-result" hidden>
+  <div class="modal-card">
+    <h2 id="result-title">맵 클리어!</h2>
+    <div class="result-body">
+      <div class="result-score" id="result-score">0</div>
+      <ul class="result-rows" id="result-rows"></ul>
+      <div class="result-concept" id="result-concept"></div>
+    </div>
+    <div class="modal-actions" id="result-actions"></div>
+  </div>
+</div>
+
+<!-- ═══ 최종 결과 (스테이지 총점 · 랭킹 등록) ═══ -->
+<div class="modal" id="modal-final" hidden>
+  <div class="modal-card">
+    <h2 id="final-title">스테이지 완료</h2>
+    <div class="result-body">
+      <div class="result-score" id="final-score">0</div>
+      <p id="final-summary"></p>
+      <div class="rank-register" id="rank-register">
+        <label>닉네임 <input type="text" id="nick-input" maxlength="12" placeholder="실명 대신 별명"></label>
+        <button class="btn btn-go" id="btn-register">랭킹 등록</button>
+        <p class="privacy-note">실명·연락처는 저장하지 않습니다. 닉네임만 기록됩니다.</p>
+      </div>
+      <div class="export-row">
+        <button class="btn btn-sub btn-small" id="btn-export-json">발사 기록 내보내기 (JSON)</button>
+        <button class="btn btn-sub btn-small" id="btn-export-csv">CSV</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-go" id="btn-final-menu">메인으로</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 랭킹 화면 (§13.4, 학급 랭킹 제외) ═══ -->
+<div class="modal" id="modal-ranking" hidden>
+  <div class="modal-card modal-wide">
+    <h2>🏆 명예의 전당</h2>
+    <div class="rank-tabs" id="rank-tabs">
+      <button class="rank-tab active" data-rk="stage">스테이지</button>
+      <button class="rank-tab" data-rk="challenge">챌린지</button>
+      <button class="rank-tab" data-rk="all">전체</button>
+    </div>
+    <div class="rank-table-wrap">
+      <table class="rank-table">
+        <thead><tr><th>순위</th><th>닉네임</th><th>점수</th><th>난이도</th><th>맵</th><th>날짜</th></tr></thead>
+        <tbody id="rank-body"></tbody>
+      </table>
+      <p class="rank-empty" id="rank-empty" hidden>아직 기록이 없습니다. 첫 도전자가 되어 보세요!</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-sub btn-small" id="btn-rank-clear">기록 지우기</button>
+      <button class="btn btn-go" id="btn-rank-close">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 조작 방법 ═══ -->
+<div class="modal" id="modal-howto" hidden>
+  <div class="modal-card">
+    <h2>조작 방법</h2>
+    <ul class="howto-list">
+      <li><b>① 각도</b> — 대포 입구 앞의 <b>곡선 다이얼(↕ 손잡이)</b>을 위아래로 끌면 포신 각도가 바뀝니다. 놓으면 각도가 고정됩니다.</li>
+      <li><b>② 힘</b> — 대포 뒤의 <b>힘 손잡이</b>를 잡아 멀리 당길수록 힘이 커집니다. 놓으면 발사됩니다. 각도는 그대로 유지됩니다.</li>
+      <li>각도·힘은 화면 왼쪽 위에 숫자로 표시됩니다.</li>
+      <li>키보드로도 조작할 수 있습니다: <b>↑↓</b> 각도, <b>←→</b> 힘, <b>스페이스</b> 발사.</li>
+      <li><b>탄환</b>을 고릅니다. 무거운 탄환은 덜 나가지만 바람·공기 저항에 덜 흔들립니다.</li>
+      <li>맵마다 <b>목표물 위치와 바람이 매번 바뀝니다.</b> 화면 왼쪽 위의 바람을 확인하세요.</li>
+      <li>빗나가면 남은 궤적을 보고 <b>조건을 하나씩 바꿔</b> 다시 시도하세요.</li>
+      <li>적은 횟수로, 목표물 중심에 가깝게 맞힐수록 높은 점수를 얻습니다.</li>
+    </ul>
+    <div class="modal-actions">
+      <button class="btn btn-go" id="btn-howto-close">닫기</button>
+    </div>
+  </div>
+</div>
+
+<script src="physics.js"></script>
+<script src="maps.js"></script>
+<script src="scoring.js"></script>
+<script src="feedback.js"></script>
+<script src="diagnose.js"></script>
+<script src="ranking.js"></script>
+<script src="sound.js"></script>
+<script src="renderer.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

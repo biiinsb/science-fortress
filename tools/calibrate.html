@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>맵 클리어 가능성 실측</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, monospace; padding: 24px; }
+  .pass { color: #0a7d32; } .fail { color: #c0182b; }
+  pre { background: #f6f7f9; padding: 12px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<div id="out"></div>
+
+<script src="../physics.js"></script>
+<script src="../maps.js"></script>
+<script>
+'use strict';
+/**
+ * 개발 계획서 4.3 Phase 2의 완료 기준: 5개 맵 × 5개 난이도 전부 클리어 가능.
+ *
+ * 이제 목표물 위치와 바람이 리스폰마다 랜덤화되므로(수정사항 4), 한 지점만이
+ * 아니라 랜덤화 공간 전체가 클리어 가능해야 한다. 각 맵/난이도마다 여러 seed로
+ * 조건을 굴려, 모든 seed에서 둥근 탄환으로 명중하는 (각도,힘) 해가 존재하는지
+ * 확인한다. 하나라도 해가 없으면 그 리스폰은 클리어 불가다.
+ *
+ * 목표물은 지면에서 띄워져 있어(수정사항 1) 굴러서는 닿지 못한다. 여기서 세는
+ * 명중은 전부 포물선으로 띄워 넣은 것이다.
+ */
+
+var SEEDS = 8;
+var A_MIN = 10, A_MAX = 80, A_STEP = 2;
+var P_MIN = 5, P_MAX = 100, P_STEP = 3;
+
+function scan(mapId, level, projId, roll) {
+  var hits = 0, best = null;
+  for (var a = A_MIN; a <= A_MAX; a += A_STEP) {
+    for (var p = P_MIN; p <= P_MAX; p += P_STEP) {
+      var cond = Maps.buildCondition({
+        mapId: mapId, level: level, projectileId: projId,
+        angle: a, power: p, windBase: roll.windBase, target: roll.target
+      });
+      var r = Physics.simulate(cond);
+      if (r.hit) {
+        hits++;
+        if (!best || r.accuracy > best.acc) best = { a: a, p: p, acc: r.accuracy };
+      }
+    }
+  }
+  return { hits: hits, best: best };
+}
+
+var rows = [];
+var failures = [];
+var warnings = [];
+
+for (var m = 1; m <= 5; m++) {
+  for (var lv = 1; lv <= 5; lv++) {
+    var map = Maps.getMap(m);
+    var shots = Maps.shotsFor(map, lv);
+    var minHits = Infinity, maxHits = 0, sumHits = 0, worstRoll = null;
+
+    for (var sd = 0; sd < SEEDS; sd++) {
+      var rng = Maps.makeRng((m * 131 + lv * 17 + sd * 7919) >>> 0);
+      var roll = Maps.rollConditions(m, rng);
+      var res = scan(m, lv, 'round', roll);
+      sumHits += res.hits;
+      maxHits = Math.max(maxHits, res.hits);
+      if (res.hits < minHits) { minHits = res.hits; worstRoll = roll; }
+      if (res.hits === 0) {
+        failures.push('Map ' + m + ' / Level ' + lv + ' / seed ' + sd +
+          ' — 목표 x=' + roll.target.x + ', 바람 ' + roll.windBase.x + ',' + roll.windBase.y +
+          ' 에서 명중 해가 없다');
+      }
+    }
+    var avg = sumHits / SEEDS;
+    if (minHits > 0 && minHits < 4) {
+      warnings.push('Map ' + m + ' / Level ' + lv + ' — 가장 어려운 리스폰의 해가 ' +
+        minHits + '개뿐 (발사 ' + shots + '회로 빠듯할 수 있다)');
+    }
+    rows.push({ m: m, lv: lv, shots: shots, min: minHits, avg: avg, max: maxHits });
+  }
+}
+
+var out = [];
+out.push('맵                난이도  발사   명중 해 개수 (8개 리스폰 표본)');
+out.push('                                 최소     평균     최대');
+out.push('-'.repeat(72));
+for (var i = 0; i < rows.length; i++) {
+  var r = rows[i];
+  var mp = Maps.getMap(r.m);
+  out.push(
+    ('Map ' + r.m + ' ' + mp.name).padEnd(18) +
+    ('L' + r.lv).padEnd(8) +
+    String(r.shots).padEnd(7) +
+    String(r.min).padEnd(9) +
+    r.avg.toFixed(1).padEnd(9) +
+    String(r.max)
+  );
+  if (r.lv === 5) out.push('');
+}
+
+var el = document.getElementById('out');
+var ok = failures.length === 0;
+el.innerHTML =
+  '<h1 id="summary" class="' + (ok ? 'pass' : 'fail') + '">' +
+  (ok ? 'PASS' : 'FAIL') + ' — 25조합 × ' + SEEDS + '개 리스폰 표본, 클리어 불가 ' +
+  failures.length + '건, 경고 ' + warnings.length + '건</h1>' +
+  failures.slice(0, 20).map(function (f) { return '<p class="fail">✘ ' + f + '</p>'; }).join('') +
+  warnings.map(function (w) { return '<p class="fail">△ ' + w + '</p>'; }).join('') +
+  '<pre id="detail">' + out.join('\n') + '</pre>';
+document.title = ok ? 'PASS' : 'FAIL';
+</script>
+</body>
+</html>

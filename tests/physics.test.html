@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>physics.js 테스트</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; padding: 24px; max-width: 900px; }
+  .pass { color: #0a7d32; } .fail { color: #c0182b; }
+  h1 { font-size: 20px; } h2 { font-size: 15px; margin: 18px 0 4px; color: #555; }
+  p { margin: 2px 0; }
+</style>
+</head>
+<body>
+<div id="out"></div>
+
+<script src="../physics.js"></script>
+<script src="../maps.js"></script>
+<script src="harness.js"></script>
+<script>
+'use strict';
+
+var FLAT = [
+  { x: -100, y: 470, surface: 'plain' },
+  { x: 1100, y: 470, surface: 'plain' }
+];
+
+function cond(over) {
+  var c = {
+    launch: { x: 80, y: 470 },
+    angle: 45,
+    power: 80,
+    projectile: { mass: 2, drag: 0.3 },
+    gravity: 9.8,
+    wind: { x: 0, y: 0 },
+    airResistance: 0,
+    frictionScale: 1,
+    terrain: FLAT,
+    obstacles: [],
+    target: { x: 5000, y: 5000, r: 26 } // 기본은 맞을 일 없는 곳
+  };
+  for (var k in over) c[k] = over[k];
+  return c;
+}
+
+// ── 결정론 (개발 계획서 4.1 원칙 2) ─────────────────────────
+
+T.describe('결정론 — 같은 입력은 같은 궤적을 낳는다');
+(function () {
+  var base = Physics.simulate(cond({ angle: 37, power: 63 }));
+  var identical = true;
+  var sameLength = true;
+  for (var i = 0; i < 100; i++) {
+    var r = Physics.simulate(cond({ angle: 37, power: 63 }));
+    if (r.path.length !== base.path.length) { sameLength = false; break; }
+    for (var j = 0; j < r.path.length; j++) {
+      if (r.path[j].x !== base.path[j].x || r.path[j].y !== base.path[j].y) {
+        identical = false; break;
+      }
+    }
+    if (!identical) break;
+  }
+  T.ok(sameLength, '100회 반복해도 궤적 점 개수가 같다');
+  T.ok(identical, '100회 반복해도 궤적의 모든 점이 비트 단위로 같다');
+})();
+
+(function () {
+  var o = { angle: 45, power: 55, airResistance: 0.03, wind: { x: 1.5, y: -0.5 } };
+  var a = Physics.simulate(cond(o));
+  var b = Physics.simulate(cond(o));
+  T.eq(a.impact.x, b.impact.x, '바람·항력이 켜져 있어도 최종 지점 x가 같다');
+  T.eq(a.impact.y, b.impact.y, '바람·항력이 켜져 있어도 최종 지점 y가 같다');
+  T.eq(a.outcome, b.outcome, '바람·항력이 켜져 있어도 판정이 같다');
+  T.eq(a.flightTime, b.flightTime, '바람·항력이 켜져 있어도 체공 시간이 같다');
+})();
+
+// ── 진공 포물선 해석해 대조 ───────────────────────────────
+
+T.describe('진공 포물선 — 해석해와 대조 (항력 0, 바람 0)');
+(function () {
+  // R = v0²·sin(2θ)/g. 발사대와 착지면이 같은 높이(y=470)일 때.
+  var g = 9.8 * Physics.PX_PER_M;
+  var angles = [15, 30, 45, 60, 75];
+  for (var i = 0; i < angles.length; i++) {
+    var th = angles[i];
+    var power = 60;
+    var mass = 2;
+    var v0 = (Physics.POWER_SCALE * power) / Math.sqrt(mass);
+    var expected = 80 + (v0 * v0 * Math.sin((2 * th * Math.PI) / 180)) / g;
+    var r = Physics.simulate(cond({ angle: th, power: power }));
+    T.near(r.landing.x, expected, 1, th + '°에서 착지 x가 해석해와 1px 이내');
+  }
+})();
+
+(function () {
+  // 최고점 높이 h = v0²·sin²θ / (2g)
+  var g = 9.8 * Physics.PX_PER_M;
+  var v0 = (Physics.POWER_SCALE * 75) / Math.sqrt(2);
+  var expected = 470 - (v0 * v0 * Math.pow(Math.sin((55 * Math.PI) / 180), 2)) / (2 * g);
+  var r = Physics.simulate(cond({ angle: 55, power: 75 }));
+  var top = Infinity;
+  for (var i = 0; i < r.path.length; i++) top = Math.min(top, r.path[i].y);
+  T.near(top, expected, 2, '최고점 높이가 해석해와 2px 이내 (60Hz 표본화 오차 포함)');
+})();
+
+(function () {
+  // 45°가 최대 사거리다
+  var best = 0, bestAngle = 0;
+  for (var th = 10; th <= 80; th += 1) {
+    var r = Physics.simulate(cond({ angle: th, power: 60 }));
+    if (r.landing.x > best) { best = r.landing.x; bestAngle = th; }
+  }
+  T.eq(bestAngle, 45, '진공에서 최대 사거리 각도는 45°다');
+})();
+
+// ── 교육적 단조성 (PRD 2.4가 학생에게 약속하는 문장들) ──────
+
+T.describe('PRD 2.4 — "발사 힘이 클수록 더 멀리 날아간다"');
+(function () {
+  // 45°·힘 80 이상은 사거리가 월드(960px)를 넘어 화면 밖으로 나간다.
+  // FR-010이 정한 실패이므로 착지 지점이 없다. 단조성은 화면 안에서만 잰다.
+  var monotone = true;
+  var prev = -1;
+  for (var p = 10; p <= 75; p += 5) {
+    var r = Physics.simulate(cond({ angle: 45, power: p }));
+    if (!r.landing || r.landing.x <= prev) { monotone = false; break; }
+    prev = r.landing.x;
+  }
+  T.ok(monotone, '힘 10→75 전 구간에서 착지 거리가 단조 증가한다');
+
+  var over = Physics.simulate(cond({ angle: 45, power: 100 }));
+  T.eq(over.outcome, 'out', '최대 힘·45°는 화면 밖으로 나간다 (FR-010 실패)');
+  T.eq(over.landing, null, '화면 밖으로 나가면 착지 지점이 없다');
+})();
+
+T.describe('PRD 2.4 — "마찰이 크면 땅에 닿은 뒤 덜 굴러간다"');
+(function () {
+  // 힘 35로 재는 이유: 세게 쏘면 얼음길에서 화면 밖까지 굴러 나가 정지 지점이
+  // 없어지고 rolled가 0으로 잡힌다. 마찰을 보려면 탄환이 세계 안에서 멈춰야 한다.
+  function rolled(surface) {
+    var terr = [{ x: -100, y: 470, surface: surface }, { x: 1100, y: 470, surface: surface }];
+    var r = Physics.simulate(cond({ angle: 40, power: 35, terrain: terr }));
+    T.ok(r.stop !== null, surface + '에서 탄환이 화면 안에서 멈춘다');
+    return r.rolled;
+  }
+  var ice = rolled('ice'), dirt = rolled('dirt'), sand = rolled('sand');
+  T.ok(ice > dirt, '얼음길이 흙길보다 멀리 구른다 (' + ice.toFixed(0) + ' > ' + dirt.toFixed(0) + ')');
+  T.ok(dirt > sand, '흙길이 모래길보다 멀리 구른다 (' + dirt.toFixed(0) + ' > ' + sand.toFixed(0) + ')');
+})();
+
+T.describe('PRD 2.4 — "공기 저항이 크면 날아가는 동안 속력이 더 빨리 줄어든다"');
+(function () {
+  var none = Physics.simulate(cond({ angle: 45, power: 70, airResistance: 0 }));
+  var some = Physics.simulate(cond({ angle: 45, power: 70, airResistance: 0.02 }));
+  var lots = Physics.simulate(cond({ angle: 45, power: 70, airResistance: 0.05 }));
+  T.ok(none.landing.x > some.landing.x, '공기 저항이 없을 때가 더 멀리 간다');
+  T.ok(some.landing.x > lots.landing.x, '공기 저항이 클수록 덜 간다');
+})();
+
+T.describe('PRD 2.4 — "바람 방향에 따라 운동 경로가 달라진다"');
+(function () {
+  var left = Physics.simulate(cond({ angle: 45, power: 60, airResistance: 0.02, wind: { x: -2, y: 0 } }));
+  var zero = Physics.simulate(cond({ angle: 45, power: 60, airResistance: 0.02, wind: { x: 0, y: 0 } }));
+  var right = Physics.simulate(cond({ angle: 45, power: 60, airResistance: 0.02, wind: { x: 2, y: 0 } }));
+  T.ok(left.landing.x < zero.landing.x, '좌풍은 탄환을 왼쪽으로 민다');
+  T.ok(right.landing.x > zero.landing.x, '우풍은 탄환을 오른쪽으로 민다');
+
+  var up = Physics.simulate(cond({ angle: 45, power: 60, airResistance: 0.02, wind: { x: 0, y: -2 } }));
+  var down = Physics.simulate(cond({ angle: 45, power: 60, airResistance: 0.02, wind: { x: 0, y: 2 } }));
+  T.ok(up.flightTime > zero.flightTime, '상승기류는 체공 시간을 늘린다');
+  T.ok(down.flightTime < zero.flightTime, '하강기류는 체공 시간을 줄인다');
+})();
+
+T.describe('바람은 공기 저항이 없어도 작용한다 (Map 3이 이 조합이다)');
+(function () {
+  // PRD 22의 Map 3은 wind 1.5 + airResistance 0이다. 바람을 항력의 일부로
+  // 모델링했다면 이 맵에서 바람이 통째로 사라진다.
+  var zero = Physics.simulate(cond({ angle: 45, power: 70, airResistance: 0, wind: { x: 0, y: 0 } }));
+  var windy = Physics.simulate(cond({ angle: 45, power: 70, airResistance: 0, wind: { x: 2, y: 0 } }));
+  T.ok(Math.abs(windy.landing.x - zero.landing.x) > 50, '항력 0에서도 바람이 궤적을 바꾼다');
+})();
+
+// ── 탄환 3종의 변인 분리 (개발 계획서 0.1(4)) ───────────────
+
+// maps.js의 실제 정의와 어긋나면 안 되므로 거기서 가져다 쓴다.
+// 탄환은 둥근·무거운 2종만 남았다 (수정사항 2). 둘은 모양(항력)이 같고 질량만 다르다.
+var ROUND = Maps.getProjectile('round');
+var HEAVY = Maps.getProjectile('heavy');
+
+T.describe('탄환 — 2종만 있다');
+(function () {
+  T.eq(Maps.PROJECTILES.length, 2, '탄환은 둥근·무거운 2종뿐이다');
+})();
+
+T.describe('탄환 — ROUND vs HEAVY는 모양이 같고 질량만 다르다 (변인 통제)');
+(function () {
+  T.eq(ROUND.drag, HEAVY.drag, '두 탄환의 모양(항력)이 같다');
+  T.ok(HEAVY.mass > ROUND.mass, '무거운 탄환의 질량이 더 크다');
+
+  var a = Physics.simulate(cond({ angle: 45, power: 60, projectile: ROUND, airResistance: 0 }));
+  var b = Physics.simulate(cond({ angle: 45, power: 60, projectile: HEAVY, airResistance: 0 }));
+  T.ok(a.landing.x > b.landing.x, '같은 힘이면 무거운 탄환이 덜 나간다 (PDF p.7 용수철 그림)');
+
+  // 그 대가로 무거운 탄환은 바람에 덜 밀린다
+  function drift(p) {
+    var w = Physics.simulate(cond({ angle: 45, power: 60, projectile: p, airResistance: 0, wind: { x: 2, y: 0 } }));
+    var n = Physics.simulate(cond({ angle: 45, power: 60, projectile: p, airResistance: 0, wind: { x: 0, y: 0 } }));
+    return w.landing.x - n.landing.x;
+  }
+  T.ok(drift(HEAVY) < drift(ROUND), '무거운 탄환이 둥근 탄환보다 바람에 덜 밀린다');
+
+  // 그리고 공기 저항에도 덜 느려진다
+  function airLoss(p) {
+    var none = Physics.simulate(cond({ angle: 45, power: 60, projectile: p, airResistance: 0 }));
+    var some = Physics.simulate(cond({ angle: 45, power: 60, projectile: p, airResistance: 0.03 }));
+    return none.landing.x - some.landing.x;
+  }
+  T.ok(airLoss(HEAVY) < airLoss(ROUND), '무거운 탄환이 공기 저항에 덜 느려진다 (Map 4의 교훈)');
+})();
+
+// ── 명중 판정과 정확도 ────────────────────────────────────
+
+T.describe('명중 판정 — 정확도는 최근접 거리로 잰다');
+(function () {
+  // 목표물 중심을 정확히 지나가게 만든 뒤, 가장자리 판정이 나오지 않는지 본다.
+  var probe = Physics.simulate(cond({ angle: 45, power: 60 }));
+  var mid = probe.path[Math.floor(probe.path.length / 2)];
+  var r = Physics.simulate(cond({ angle: 45, power: 60, target: { x: mid.x, y: mid.y, r: 26 } }));
+  T.ok(r.hit, '궤적 위에 놓인 목표물은 명중한다');
+  T.ok(r.accuracy > 0.85, '궤적이 중심을 지나면 정확도가 높다 (' + r.accuracy.toFixed(3) + ')');
+})();
+
+(function () {
+  var probe = Physics.simulate(cond({ angle: 45, power: 60 }));
+  var mid = probe.path[Math.floor(probe.path.length / 2)];
+  var r = Physics.simulate(cond({ angle: 45, power: 60, target: { x: mid.x, y: mid.y - 24, r: 26 } }));
+  T.ok(r.hit, '가장자리를 스쳐도 명중이다');
+  T.ok(r.accuracy < 0.4, '가장자리 명중은 정확도가 낮다 (' + r.accuracy.toFixed(3) + ')');
+})();
+
+(function () {
+  var r = Physics.simulate(cond({ angle: 45, power: 60, target: { x: 400, y: 100, r: 26 } }));
+  T.ok(!r.hit, '빗나가면 명중이 아니다');
+  T.eq(r.accuracy, 0, '빗나가면 정확도는 0이다');
+  T.ok(r.missDistance > 26, '빗나간 거리가 반지름보다 크다');
+})();
+
+(function () {
+  // 빠른 탄환이 목표물을 한 스텝에 건너뛰지 않는지 (선분-원 거리로 재는 이유)
+  var probe = Physics.simulate(cond({ angle: 20, power: 100 }));
+  var pt = probe.path[6];
+  var r = Physics.simulate(cond({ angle: 20, power: 100, target: { x: pt.x, y: pt.y, r: 8 } }));
+  T.ok(r.hit, '고속 구간의 작은 목표물(r=8)도 놓치지 않는다');
+})();
+
+T.describe('수정사항 1 — 굴러서는 띄운 목표물에 닿지 못한다');
+(function () {
+  // 낮게 쏴서 착지 후 지면을 굴러가다 화면 안에서 멈추는 발사를 찾는다.
+  var roll = null, aa, pp;
+  for (aa = 18; aa <= 30 && !roll; aa += 2) {
+    for (pp = 45; pp <= 68; pp += 2) {
+      var r = Physics.simulate(cond({ angle: aa, power: pp }));
+      if (r.landing && r.stop && r.rolled > 40) { roll = r; break; }
+    }
+  }
+  T.ok(roll !== null, '착지 후 굴러가 화면 안에서 멈추는 발사가 있다');
+  var rollX = Math.round((roll.landing.x + roll.stop.x) / 2); // 굴러가는 구간의 한 점
+
+  // 같은 x에 지면 높이 목표물을 두면, 굴러가는 탄환이 지나가며 명중한다 (대조군)
+  var onGround = Physics.simulate(cond({ angle: aa, power: pp, target: { x: rollX, y: 470, r: 26 } }));
+  T.ok(onGround.hit, '지면 높이 목표물은 굴러가는 탄환이 지나가며 맞는다 (x=' + rollX + ')');
+
+  // 하지만 같은 x에 지면에서 띄운 목표물(바닥이 470-36)을 두면 닿지 못한다
+  var lifted = Physics.simulate(cond({ angle: aa, power: pp, target: { x: rollX, y: 470 - 62, r: 26 } }));
+  T.ok(!lifted.hit, '띄운 목표물은 굴러서는 닿지 못한다 (짧은 발사로 클리어 불가)');
+})();
+
+// ── 장애물과 지형 ─────────────────────────────────────────
+
+T.describe('장애물');
+(function () {
+  var wall = { x: 400, y: 300, w: 40, h: 170, type: 'wall' };
+  var low = Physics.simulate(cond({ angle: 20, power: 70, obstacles: [wall] }));
+  T.eq(low.outcome, 'obstacle', '낮은 각도로 쏘면 벽에 부딪힌다');
+  T.ok(low.obstacle === wall, '부딪힌 장애물을 알려준다');
+
+  // 힘은 그대로 두고 각도만 올리면 넘어간다 — Map 5가 학생에게 가르치려는 것이다
+  // (PRD 7.5: "직접 맞히기보다 높은 각도 또는 우회 경로 필요").
+  var high = Physics.simulate(cond({ angle: 70, power: 70, obstacles: [wall] }));
+  T.ok(high.outcome !== 'obstacle', '같은 힘이라도 각도를 높이면 벽을 넘는다');
+  T.ok(high.landing.x > 440, '벽 너머에 착지한다 (' + high.landing.x.toFixed(0) + ')');
+
+  var tooWeak = Physics.simulate(cond({ angle: 70, power: 30, obstacles: [wall] }));
+  T.ok(tooWeak.landing.x < 400, '각도가 높아도 힘이 약하면 벽에 닿지도 못한다');
+})();
+
+T.describe('지형 — 절벽 아래로 떨어지면 실패다');
+(function () {
+  var chasm = [
+    { x: -100, y: 470, surface: 'rock' },
+    { x: 400, y: 470, surface: 'rock' },
+    { x: 420, y: 900, surface: 'rock' },
+    { x: 600, y: 900, surface: 'rock' },
+    { x: 620, y: 380, surface: 'rock' },
+    { x: 1100, y: 380, surface: 'rock' }
+  ];
+  // 힘 30은 사거리가 124px이라 협곡(420~600) 근처에도 못 간다.
+  // 힘 40이면 앞마당에 떨어진 뒤 바위 위를 굴러 절벽 끝까지 가서 빠진다 —
+  // 굴러가는 거리까지 합쳐야 실제 도달 지점이 나온다.
+  var weak = Physics.simulate(cond({ angle: 45, power: 30, terrain: chasm }));
+  T.eq(weak.outcome, 'stopped', '너무 약하면 협곡까지 가지도 못한다');
+
+  var rollIn = Physics.simulate(cond({ angle: 45, power: 40, terrain: chasm }));
+  T.eq(rollIn.outcome, 'fell', '절벽 앞에 떨어져도 굴러서 빠질 수 있다');
+
+  var short = Physics.simulate(cond({ angle: 45, power: 57, terrain: chasm }));
+  T.eq(short.outcome, 'fell', '협곡에 빠지면 fell이다');
+
+  var far = Physics.simulate(cond({ angle: 45, power: 70, terrain: chasm }));
+  T.ok(far.outcome !== 'fell', '충분히 세게 쏘면 건너편 절벽에 닿는다');
+  T.ok(far.landing.x > 620, '건너편 대지에 착지한다 (' + far.landing.x.toFixed(0) + ')');
+})();
+
+T.describe('지형 — 경사면에서는 굴러 내려간다');
+(function () {
+  // 내리막 끝을 모래로 깔았다. 흙·얼음이면 경사에서 얻은 속력으로 화면 밖까지
+  // 굴러 나가 정지 지점이 생기지 않는다 — 그건 이 테스트가 볼 성질이 아니다.
+  var slope = [
+    { x: -100, y: 400, surface: 'plain' },
+    { x: 400, y: 400, surface: 'plain' },
+    { x: 620, y: 480, surface: 'sand' },
+    { x: 1100, y: 480, surface: 'sand' }
+  ];
+  var r = Physics.simulate(cond({ angle: 30, power: 45, terrain: slope, launch: { x: 80, y: 400 } }));
+  T.ok(r.stop !== null, '경사를 지나도 결국 멈춘다 (무한 루프에 빠지지 않는다)');
+  T.ok(r.landing !== null, '경사 지형에서도 착지 지점을 기록한다');
+  T.ok(r.stop.x > r.landing.x, '착지 뒤 앞으로 굴러간다');
+  T.ok(r.stop.y > r.landing.y, '내리막을 따라 낮은 곳으로 내려간다');
+})();
+
+T.describe('경사가 가파르면 정지마찰로 버티지 못한다');
+(function () {
+  var steep = [
+    { x: -100, y: 300, surface: 'ice' },
+    { x: 300, y: 300, surface: 'ice' },
+    { x: 700, y: 470, surface: 'sand' },
+    { x: 1100, y: 470, surface: 'sand' }
+  ];
+  var r = Physics.simulate(cond({ angle: 20, power: 30, terrain: steep, launch: { x: 80, y: 300 } }));
+  T.ok(r.stop.x > 700, '얼음 비탈에 얹힌 탄환은 멈추지 않고 미끄러져 내려간다');
+})();
+
+T.describe('종료 보장 — 모든 조합에서 시뮬레이션이 끝난다');
+(function () {
+  var stuck = 0, total = 0;
+  for (var th = 10; th <= 80; th += 10) {
+    for (var p = 10; p <= 100; p += 10) {
+      for (var ar = 0; ar <= 0.05; ar += 0.025) {
+        total++;
+        var r = Physics.simulate(cond({ angle: th, power: p, airResistance: ar, wind: { x: 1, y: -0.5 } }));
+        if (r.outcome === 'timeout') stuck++;
+      }
+    }
+  }
+  T.eq(stuck, 0, total + '개 조합 전부 20초 안에 끝난다 (timeout 0건)');
+})();
+
+T.report();
+</script>
+</body>
+</html>
