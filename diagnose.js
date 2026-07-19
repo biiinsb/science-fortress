@@ -129,12 +129,20 @@ var Diagnose = (function () {
     var shortOfTarget = actualEnd.x < target.x;
     var missX = Math.abs(actualEnd.x - target.x);
 
+    // 탄환이 공중에서 과녁을 넘겼는가. 넘긴 적이 없다면(착지가 과녁 먼쪽 끝 이내),
+    // 최종 위치가 과녁 뒤라도 그건 굴러서 지나간 것이지 "힘 과다"가 아니다.
+    // 과녁은 공중에 떠 있으므로 굴려서는 못 맞힌다 — 띄워 넣으라고 안내한다.
+    var arcOvershot = result.landing && result.landing.x > target.x + target.r;
+
     if (shortOfTarget && missX > 20) {
       // 짧다. 각도가 극단이면 각도를, 아니면 힘을 탓한다.
       if (cond.angle >= 70) return { code: 'angleTooHigh', blame: blame };
       return { code: 'tooWeak', blame: blame };
     }
     if (!shortOfTarget && missX > 20) {
+      // 최종 위치가 과녁 뒤다. 공중에서 넘긴 게 아니라 굴러 지나간 것이면
+      // 힘 과다가 아니라 포물선 조준 문제다.
+      if (!arcOvershot) return { code: 'rolledPast', blame: blame };
       if (cond.angle <= 20) return { code: 'angleTooLow', blame: blame };
       return { code: 'tooStrong', blame: blame };
     }

@@ -168,6 +168,63 @@ T.describe('진단 — 과녁 바로 앞(반지름 이내)에 떨어져 굴러 �
   }
 })();
 
+T.describe('진단 — 과녁 아래로 굴러 뒤에 멈춰도 rolledPast (stopped, 힘 과다 아님)');
+(function () {
+  // 스크린샷 상황: 짧게 떨어져(과녁 한참 아래) 굴러가 과녁 뒤에 멈춤.
+  // 최종 위치는 과녁 뒤지만 공중에서 넘긴 적이 없으니 "힘 과다"가 아니다.
+  var target = { x: 700, y: 470 - 62, r: 26 };
+  function iceCond(power, fric) {
+    return {
+      launch: { x: 180, y: 470 }, angle: 14, power: power,
+      projectile: Maps.getProjectile('round'), gravity: 9.8,
+      wind: { x: 0, y: 0 }, airResistance: 0, frictionScale: fric,
+      terrain: [{ x: -200, y: 470, surface: 'ice' }, { x: 1600, y: 470, surface: 'ice' }],
+      obstacles: [], target: target
+    };
+  }
+  // 짧게 떨어져(착지 과녁 앞) 굴러 과녁 뒤에 멈추는 (힘, 마찰) 조합을 찾는다
+  var found = null;
+  for (var fr = 0.15; fr <= 1.2 && !found; fr += 0.15) {
+    for (var p = 30; p <= 100; p += 1) {
+      var r = Physics.simulate(iceCond(p, fr));
+      if (r.outcome === 'stopped' && r.stop && r.stop.x > target.x &&
+          r.landing && r.landing.x <= target.x + target.r) {
+        found = { cond: iceCond(p, fr), result: r }; break;
+      }
+    }
+  }
+  T.ok(found !== null, '과녁 앞에 떨어져 굴러 과녁 뒤에 멈추는 발사가 있다');
+  if (found) {
+    T.ok(found.result.landing.x < target.x, '착지는 과녁 앞이다 (착지 ' + found.result.landing.x.toFixed(0) + ')');
+    T.ok(found.result.stop.x > target.x, '정지는 과녁 뒤다 (정지 ' + found.result.stop.x.toFixed(0) + ')');
+    var d = Diagnose.diagnose(found.cond, found.result);
+    T.eq(d.code, 'rolledPast', '굴러 지나쳐 멈춘 것을 tooStrong이 아니라 rolledPast로 진단한다');
+    T.ok(Feedback.message(d.code).indexOf('지나쳤') === -1, '"목표물을 지나쳤습니다"라고 하지 않는다');
+  }
+})();
+
+T.describe('진단 — 공중에서 진짜로 넘겨 뒤에 멈추면 tooStrong');
+(function () {
+  // 대조군: 높은 arc로 과녁을 공중에서 넘겨 뒤에 착지·정지 → 진짜 힘 과다
+  var target = { x: 500, y: 470 - 62, r: 26 };
+  function c(power) {
+    return {
+      launch: { x: 180, y: 470 }, angle: 45, power: power,
+      projectile: Maps.getProjectile('round'), gravity: 9.8,
+      wind: { x: 0, y: 0 }, airResistance: 0, frictionScale: 1.5, // 마찰 커서 곧 멈춤
+      terrain: [{ x: -200, y: 470, surface: 'sand' }, { x: 1600, y: 470, surface: 'sand' }],
+      obstacles: [], target: target
+    };
+  }
+  var found = null;
+  for (var p = 40; p <= 100; p += 1) {
+    var r = Physics.simulate(c(p));
+    if (r.outcome === 'stopped' && r.landing && r.landing.x > target.x + target.r) { found = { cond: c(p), result: r }; break; }
+  }
+  T.ok(found !== null, '공중에서 과녁을 넘겨 뒤에 착지하는 발사가 있다');
+  if (found) T.eq(Diagnose.diagnose(found.cond, found.result).code, 'tooStrong', '공중에서 넘긴 것은 tooStrong으로 진단한다');
+})();
+
 T.describe('힌트가 메시지와 겹치면 반복하지 않는다 (버블 중복 방지)');
 (function () {
   // outOfBounds는 메시지·힌트가 모두 "힘을 조금 줄여 보세요"라, 그대로 붙이면
