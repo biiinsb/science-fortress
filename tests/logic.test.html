@@ -108,12 +108,34 @@ T.describe('진단 — 너무 약하면 tooWeak (환경 없는 Map 1)');
   T.eq(d.code, 'tooWeak', '짧게 떨어지면 힘 부족으로 진단한다');
 })();
 
-T.describe('진단 — 화면 밖으로 나가면 outOfBounds');
+T.describe('진단 — 공중에서 과녁을 넘겨 화면 밖으로 나가면 outOfBounds (힘 과다)');
 (function () {
   var s = shoot(1, 3, 'round', 45, 100);
   T.eq(s.result.outcome, 'out', '최대 힘·45°는 화면 밖으로');
   var d = Diagnose.diagnose(s.cond, s.result);
-  T.eq(d.code, 'outOfBounds', '화면 밖 이탈을 진단한다');
+  T.eq(d.code, 'outOfBounds', '공중에서 넘어간 이탈은 힘 과다로 진단한다');
+})();
+
+T.describe('진단 — 과녁 앞에 떨어져 굴러 나가면 rolledPast (힘 과다 아님)');
+(function () {
+  // 낮은 각도로 약하게 쏘면 과녁 앞에 떨어진 뒤 미끄러운 지면을 굴러 화면 밖으로
+  // 나간다. 이때 "힘을 줄이세요"는 정반대 조언이다.
+  var picked = null;
+  for (var a = 10; a <= 24 && !picked; a += 1) {
+    for (var p = 20; p <= 55; p += 1) {
+      var s = shoot(1, 3, 'round', a, p);
+      if (s.result.outcome === 'out' && s.result.landing &&
+          s.result.landing.x < s.cond.target.x - s.cond.target.r) {
+        picked = s; break;
+      }
+    }
+  }
+  T.ok(picked !== null, '과녁 앞에 떨어져 굴러 나가는 발사가 존재한다');
+  if (picked) {
+    var d = Diagnose.diagnose(picked.cond, picked.result);
+    T.eq(d.code, 'rolledPast', '굴러 지나간 것을 힘 과다가 아니라 rolledPast로 진단한다');
+    T.ok(Feedback.message(d.code).indexOf('줄여') === -1, '문구가 "힘을 줄이라"고 하지 않는다');
+  }
 })();
 
 // 바람 진단은 Maps를 거치지 않고 조건을 직접 만들어 격리한다.
@@ -229,7 +251,7 @@ T.describe('진단 — 모든 원인 코드가 feedback.js에 문구를 가진�
 (function () {
   var codes = ['success', 'successCenter', 'tooWeak', 'tooStrong', 'angleTooLow',
     'angleTooHigh', 'windLeft', 'windRight', 'windUp', 'windDown', 'highFriction',
-    'highAirResistance', 'obstacle', 'obstacleLow', 'fell', 'outOfBounds'];
+    'highAirResistance', 'obstacle', 'obstacleLow', 'fell', 'outOfBounds', 'rolledPast'];
   var ok = true;
   for (var i = 0; i < codes.length; i++) {
     if (!Feedback.MESSAGES[codes[i]]) { ok = false; T.ok(false, codes[i] + ' 문구 없음'); }

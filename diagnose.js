@@ -43,8 +43,15 @@ var Diagnose = (function () {
       return { code: result.accuracy >= 0.8 ? 'successCenter' : 'success', blame: null };
     }
 
-    // 명백한 종료 상태부터. 반사실을 돌릴 것도 없다.
-    if (result.outcome === 'out') return { code: 'outOfBounds', blame: null };
+    // 화면 밖으로 나간 발사. 무조건 "힘이 너무 커서 넘어갔다"로 보면 안 된다.
+    // 힘이 모자라 과녁 앞에 떨어진 뒤, 미끄러운 지면을 굴러 화면 밖으로 나가는
+    // 경우가 있다 — 이때는 힘 과다가 아니라 과녁을 공중에서 못 맞힌 것이다.
+    // 착지 지점으로 둘을 구분한다: 착지가 과녁보다 앞이면 "굴러 지나감",
+    // 아니면(공중에서 넘어감/과녁 뒤 착지) "힘 과다".
+    if (result.outcome === 'out') {
+      var landedShort = result.landing && result.landing.x < cond.target.x - cond.target.r;
+      return { code: landedShort ? 'rolledPast' : 'outOfBounds', blame: null };
+    }
     if (result.outcome === 'fell') return { code: 'fell', blame: null };
     if (result.outcome === 'obstacle') {
       // 장애물을 낮게 맞았으면 각도를, 그 외는 일반 장애물 문구를.
