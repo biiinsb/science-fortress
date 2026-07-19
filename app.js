@@ -301,9 +301,12 @@
     S.lastFailCode = diag.code;
 
     var msg = Feedback.message(diag.code);
-    // 3회 이상 연속 실패면 힌트를 덧붙인다 (PRD 12.3, PDF p.11)
+    // 3회 이상 연속 실패면 힌트를 덧붙인다 (PRD 12.3, PDF p.11).
+    // 단, 힌트가 이미 메시지에 들어 있으면 같은 말을 두 번 하지 않는다
+    // (예: outOfBounds는 메시지·힌트가 모두 "힘을 줄여 보세요").
     if (S.failStreak >= 3) {
-      msg += ' 💡 ' + Feedback.hint(diag.code);
+      var hint = Feedback.hint(diag.code);
+      if (msg.indexOf(hint) === -1) msg += ' 💡 ' + hint;
     }
     showBubble(msg, 'warn');
 
