@@ -35,5 +35,5 @@
  * 채우기 전까지는 랭킹이 로컬(이 기기)로만 동작한다.
  */
 window.SF_FIREBASE = {
-  databaseURL: '여기에_databaseURL'
+  databaseURL: 'https://science-fortress-default-rtdb.asia-southeast1.firebasedatabase.app'
 };
