@@ -281,6 +281,7 @@ body { display: flex; flex-direction: column; }
 .export-row { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
 
 /* ── 랭킹 ── */
+.rank-status { text-align: center; font-size: 0.82rem; color: #5a7891; margin: 0 0 12px; }
 .rank-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
 .rank-tab {
   border: 2px solid var(--line); background: #f4faff;

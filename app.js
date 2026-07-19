@@ -498,10 +498,13 @@
     openModal('modal-final');
   }
 
+  function cloudOn() {
+    return window.Cloud && window.Cloud.enabled;
+  }
+
   function register() {
-    var nick = $('nick-input').value;
-    Ranking.submit({
-      nickname: nick,
+    var record = {
+      nickname: $('nick-input').value,
       mode: S.mode,
       difficulty: S.level,
       totalScore: S.finalScore,
@@ -509,16 +512,32 @@
       totalShots: S.totalShotsUsed,
       bestAccuracy: S.bestAccuracy,
       seed: S.mode === 'challenge' ? S.seed : null
-    });
+    };
+    Ranking.submit(record); // 로컬에도 즉시 저장 (오프라인 대비)
     Sound.play('rank');
-    $('rank-register').innerHTML = '<p style="text-align:center;font-weight:700;color:var(--ok)">랭킹에 등록되었습니다! 🎉</p>';
+    var box = $('rank-register');
+    function done(text) { box.innerHTML = '<p style="text-align:center;font-weight:700;color:var(--ok)">' + text + '</p>'; }
+
+    if (cloudOn()) {
+      done('전체 랭킹에 등록하는 중…');
+      window.Cloud.submit(record)
+        .then(function () { done('전체 명예의 전당에 등록되었습니다! 🎉'); })
+        .catch(function () { done('이 기기에 저장했습니다. (공유 랭킹 연결에 실패했어요)'); });
+    } else {
+      done('기록이 저장되었습니다! 🎉');
+    }
   }
 
   // ─── 랭킹 화면 ─────────────────────────────────────────
 
   var rankTab = 'stage';
-  function renderRanking() {
-    var rows = Ranking.list(rankTab);
+
+  function setRankStatus(text) {
+    var el = $('rank-status');
+    if (el) el.textContent = text;
+  }
+
+  function fillRankRows(rows) {
     var body = $('rank-body');
     body.innerHTML = '';
     $('rank-empty').hidden = rows.length > 0;
@@ -530,13 +549,33 @@
       tr.innerHTML =
         '<td>' + rank + '</td>' +
         '<td></td>' +
-        '<td>' + r.totalScore.toLocaleString() + '</td>' +
+        '<td>' + (r.totalScore || 0).toLocaleString() + '</td>' +
         '<td>Lv.' + r.difficulty + ' ' + diffName + '</td>' +
         '<td>' + r.clearedMaps + '</td>' +
-        '<td>' + r.date + '</td>';
+        '<td>' + (r.date || '') + '</td>';
       tr.children[1].textContent = r.nickname; // XSS 방지: textContent로
       body.appendChild(tr);
     });
+  }
+
+  function renderRanking() {
+    if (cloudOn()) {
+      setRankStatus('🌐 전체 공유 랭킹 — 접속한 모두가 함께 봅니다');
+      $('rank-body').innerHTML = '';
+      $('rank-empty').hidden = true;
+      window.Cloud.list(rankTab, 50)
+        .then(function (rows) {
+          if (rows.length === 0) $('rank-empty').hidden = false;
+          fillRankRows(rows);
+        })
+        .catch(function () {
+          setRankStatus('공유 랭킹을 불러오지 못해 이 기기 기록을 보여줍니다.');
+          fillRankRows(Ranking.list(rankTab));
+        });
+    } else {
+      setRankStatus('📱 이 기기에만 저장된 기록입니다.');
+      fillRankRows(Ranking.list(rankTab));
+    }
   }
 
   // ─── 모드 시작 ─────────────────────────────────────────
@@ -760,7 +799,13 @@
     document.querySelectorAll('.btn-mode').forEach(function (b) {
       b.onclick = function () { Sound.unlock(); Sound.play('button'); startMode(b.dataset.mode); };
     });
-    $('btn-ranking').onclick = function () { Sound.play('button'); renderRanking(); openModal('modal-ranking'); };
+    $('btn-ranking').onclick = function () {
+      Sound.play('button');
+      // 공유 랭킹은 개인이 지울 수 없다(규칙상 삭제 금지). 로컬일 때만 지우기 노출.
+      $('btn-rank-clear').hidden = cloudOn();
+      renderRanking();
+      openModal('modal-ranking');
+    };
     $('btn-howto').onclick = function () { Sound.play('button'); openModal('modal-howto'); };
     $('btn-howto-close').onclick = function () { closeModal('modal-howto'); };
 
