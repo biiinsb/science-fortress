@@ -680,7 +680,6 @@
   // 손잡이를 잡았다고 볼 반경. 화면이 좁으면(휴대폰) 손잡이가 커지므로 잡는
   // 범위도 같이 키운다 — 안 그러면 손가락으로 도저히 잡을 수 없다.
   var GRAB_R_BASE = 52;
-  var MIN_FIRE_POWER = 6;
 
   function grabR() {
     return GRAB_R_BASE * scene.ui();
@@ -713,18 +712,15 @@
   }
 
   /**
-   * 손잡이를 당긴 거리로 힘을 정한다. 각도는 그대로.
-   * 방향은 따지지 않고 거리만 본다 — 대포가 화면 왼쪽 아래에 있어 "뒤로"만
-   * 허용하면 휴대폰에서 당길 공간이 없다. 뒤쪽 위(하늘)로 당기면 넉넉하다.
+   * 게이지에서 누른(끈) 높이로 힘을 정한다. 각도는 그대로.
+   * 값을 직접 집는 방식이라 같은 힘을 정확히 다시 낼 수 있다 — 힘은 그대로 두고
+   * 각도만 바꿔 비교하는 변인 통제 학습에 이게 꼭 필요하다.
    */
   function applyPower(pt) {
     var launch = Maps.getMap(S.mapId).launch;
-    // 손잡이 기본 위치를 힘 0으로 잡는다. 위치 계산은 렌더러와 공유해야
-    // 그림과 값이 어긋나지 않는다.
-    var rest = d2(Renderer.knobPowerRest(launch, S.angle, scene.ui()), launch);
-    var pull = d2(pt, launch) - rest;
-    S.power = Math.max(1, Math.min(100, Math.round((pull / Renderer.MAX_PULL) * 100)));
-    S.drag = { mode: 'power', point: { x: pt.x, y: pt.y } };
+    var g = Renderer.powerGauge(launch, scene.ui());
+    S.power = Renderer.powerFromY(g, pt.y);
+    S.drag = { mode: 'power' };
   }
 
   function bindCannonDrag() {
@@ -741,20 +737,25 @@
       var ui = scene.ui();
       var G = grabR();
       var aimKnob = Renderer.knobAngle(launch, S.angle, ui);
-      var powerKnob = Renderer.knobPowerRest(launch, S.angle, ui);
       var dAim = d2(pt, aimKnob);
-      var dPow = d2(pt, powerKnob);
       // 다이얼 호 위를 눌러도 각도를 잡을 수 있게 (더 관대하게)
       var onArc = Math.abs(d2(pt, launch) - Renderer.ARC_R) <= 30 * ui && pt.x > launch.x;
 
-      if (dPow <= G && dPow < dAim) {
+      // 힘 게이지: 막대 위 아무 곳이나 누르면 그 높이로 정해진다(탭), 끌어도 된다.
+      // 손가락으로도 집기 쉽게 게이지 둘레를 여유 있게 잡는다.
+      var g = Renderer.powerGauge(launch, ui);
+      var pad = 22 * ui;
+      var onGauge = pt.x >= g.x - pad && pt.x <= g.x + g.w + pad &&
+                    pt.y >= g.y - pad && pt.y <= g.y + g.h + pad;
+
+      if (onGauge) {
         mode = 'power';
         applyPower(pt);
       } else if (dAim <= G || onArc) {
         mode = 'aim';
         applyAim(pt);
       } else {
-        mode = null; // 손잡이도 다이얼도 아니면 아무 일 없음
+        mode = null; // 게이지도 다이얼도 아니면 아무 일 없음
         return;
       }
       syncSliders();
@@ -773,15 +774,12 @@
     function end(evt) {
       if (!mode) return;
       evt.preventDefault();
-      var wasPower = mode === 'power';
-      var power = S.power;
+      // 게이지는 "값을 정하는" 컨트롤이라 놓아도 발사되지 않는다.
+      // 발사는 발사! 버튼(또는 스페이스)으로 — 조준과 발사를 분리해야 실수로
+      // 쏘지 않고, 같은 조건을 그대로 두고 다시 확인할 수 있다.
       mode = null;
       S.drag = null;
-      if (wasPower && power >= MIN_FIRE_POWER) {
-        fire();
-      } else {
-        draw(); // 각도만 맞췄거나 힘이 너무 약하면 발사하지 않는다
-      }
+      draw();
     }
 
     canvas.addEventListener('mousedown', start);
