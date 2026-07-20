@@ -49,6 +49,8 @@
     respawnCount: 0,      // 랜덤 seed를 바꾸는 카운터
 
     drag: null,           // 대포 조준 드래그 상태 (수정사항 3)
+    pulse: 0,             // 힘 손잡이 안내의 숨쉬기 값 (0~1)
+    everPulled: false,    // 한 번이라도 당겨 봤나 — 그 뒤엔 안내를 멈춘다
 
     animating: false,
     sessionId: 't' + Math.floor(performance.now())
@@ -105,6 +107,7 @@
       projectilePos: null,
       aimGuide: Physics.aimGuide(cond, 78),
       drag: S.drag,
+      pulse: S.pulse,
       showFullPredict: S.showPredict && S.mode === 'practice',
       predictPath: null,
       burst: null,
@@ -456,6 +459,7 @@
     updateHud();
     hideBubble();
     draw();
+    startPulse(); // 아직 당겨 본 적 없으면 손잡이 안내가 숨쉰다
   }
 
   function nextMap() {
@@ -680,6 +684,7 @@
   // 손잡이를 잡았다고 볼 반경. 화면이 좁으면(휴대폰) 손잡이가 커지므로 잡는
   // 범위도 같이 키운다 — 안 그러면 손가락으로 도저히 잡을 수 없다.
   var GRAB_R_BASE = 52;
+  var MIN_FIRE_POWER = 6;
 
   function grabR() {
     return GRAB_R_BASE * scene.ui();
@@ -712,15 +717,44 @@
   }
 
   /**
-   * 게이지에서 누른(끈) 높이로 힘을 정한다. 각도는 그대로.
-   * 값을 직접 집는 방식이라 같은 힘을 정확히 다시 낼 수 있다 — 힘은 그대로 두고
-   * 각도만 바꿔 비교하는 변인 통제 학습에 이게 꼭 필요하다.
+   * 손잡이를 당긴 거리로 힘을 정한다. 각도는 그대로.
+   * 방향은 따지지 않고 거리만 본다 — 대포가 화면 왼쪽 아래에 있어 "뒤로"만
+   * 허용하면 휴대폰에서 당길 공간이 없다. 뒤쪽 위(하늘)로 당기면 넉넉하다.
    */
   function applyPower(pt) {
     var launch = Maps.getMap(S.mapId).launch;
-    var g = Renderer.powerGauge(launch, scene.ui());
-    S.power = Renderer.powerFromY(g, pt.y);
-    S.drag = { mode: 'power' };
+    // 손잡이 기본 위치를 힘 0으로 잡는다. 위치 계산은 렌더러와 공유해야
+    // 그림과 값이 어긋나지 않는다.
+    var rest = d2(Renderer.knobPowerRest(launch, S.angle, scene.ui()), launch);
+    var pull = d2(pt, launch) - rest;
+    S.power = Math.max(1, Math.min(100, Math.round((pull / Renderer.MAX_PULL) * 100)));
+    S.drag = { mode: 'power', point: { x: pt.x, y: pt.y } };
+  }
+
+  /**
+   * 힘 손잡이 안내(고리·화살표·말풍선)의 숨쉬기 애니메이션.
+   * 한 번이라도 당겨 보면 조작법을 안 것이므로 멈춘다 — 계속 깜빡이면 잔소리가
+   * 되고, 쉬는 동안 화면을 계속 다시 그리는 것도 낭비다.
+   */
+  function startPulse() {
+    if (S.pulseTimer) return;
+    var t0 = performance.now();
+    function step(now) {
+      if (S.everPulled || !$('screen-game').classList.contains('active')) {
+        S.pulseTimer = null;
+        S.pulse = 0;
+        if (!S.animating) draw();
+        return;
+      }
+      if (!S.animating && !S.drag) {
+        // 1.6초 주기로 0→1→0
+        var p = (Math.sin(((now - t0) / 1600) * Math.PI * 2) + 1) / 2;
+        S.pulse = p;
+        draw();
+      }
+      S.pulseTimer = requestAnimationFrame(step);
+    }
+    S.pulseTimer = requestAnimationFrame(step);
   }
 
   function bindCannonDrag() {
@@ -737,25 +771,22 @@
       var ui = scene.ui();
       var G = grabR();
       var aimKnob = Renderer.knobAngle(launch, S.angle, ui);
+      var powerKnob = Renderer.knobPowerRest(launch, S.angle, ui);
       var dAim = d2(pt, aimKnob);
+      var dPow = d2(pt, powerKnob);
       // 다이얼 호 위를 눌러도 각도를 잡을 수 있게 (더 관대하게)
       var onArc = Math.abs(d2(pt, launch) - Renderer.ARC_R) <= 30 * ui && pt.x > launch.x;
 
-      // 힘 게이지: 막대 위 아무 곳이나 누르면 그 높이로 정해진다(탭), 끌어도 된다.
-      // 손가락으로도 집기 쉽게 게이지 둘레를 여유 있게 잡는다.
-      var g = Renderer.powerGauge(launch, ui);
-      var pad = 22 * ui;
-      var onGauge = pt.x >= g.x - pad && pt.x <= g.x + g.w + pad &&
-                    pt.y >= g.y - pad && pt.y <= g.y + g.h + pad;
-
-      if (onGauge) {
+      if (dPow <= G && dPow < dAim) {
         mode = 'power';
+        S.everPulled = true; // 조작법을 알았으니 안내를 멈춘다
+        S.pulse = 0;
         applyPower(pt);
       } else if (dAim <= G || onArc) {
         mode = 'aim';
         applyAim(pt);
       } else {
-        mode = null; // 게이지도 다이얼도 아니면 아무 일 없음
+        mode = null; // 손잡이도 다이얼도 아니면 아무 일 없음
         return;
       }
       syncSliders();
@@ -774,12 +805,15 @@
     function end(evt) {
       if (!mode) return;
       evt.preventDefault();
-      // 게이지는 "값을 정하는" 컨트롤이라 놓아도 발사되지 않는다.
-      // 발사는 발사! 버튼(또는 스페이스)으로 — 조준과 발사를 분리해야 실수로
-      // 쏘지 않고, 같은 조건을 그대로 두고 다시 확인할 수 있다.
+      var wasPower = mode === 'power';
+      var power = S.power;
       mode = null;
       S.drag = null;
-      draw();
+      if (wasPower && power >= MIN_FIRE_POWER) {
+        fire();
+      } else {
+        draw(); // 각도만 맞췄거나 힘이 너무 약하면 발사하지 않는다
+      }
     }
 
     canvas.addEventListener('mousedown', start);

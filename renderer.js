@@ -346,45 +346,21 @@ var Renderer = (function () {
   // 손잡이를 당겨 정한다. 두 손잡이가 서로 멀리 떨어져 눈에 보이므로, 무엇을
   // 잡아야 하는지 헷갈리지 않는다.
   var ARC_R = 100;    // 각도 다이얼 반지름
-  var MAX_PULL = 220; // (구) 당김 방식에서 쓰던 값. 게이지 전환 후에도 호환용으로 남김
+  var MAX_PULL = 220; // 손잡이 기본 위치에서 이만큼 더 당기면 힘 100
 
-  // ── 힘 게이지 (대포 옆 세로 막대) ───────────────────────
-  //
-  // 예전에는 대포 뒤 작은 손잡이를 "당기는" 방식이었는데, 처음 보는 사람은 그게
-  // 조작할 수 있는 것인 줄 몰랐다. 눈금과 라벨이 있는 세로 게이지로 바꿔, 보자마자
-  // 슬라이더임을 알게 했다. 끌어도 되고 원하는 높이를 그냥 눌러도 된다.
-  // 타이밍이 아니라 값을 직접 정하므로, 같은 힘을 정확히 다시 낼 수 있다
-  // (변인 통제 학습에 필수 — 힘만 그대로 두고 각도만 바꿔 비교할 수 있어야 한다).
-  var GAUGE_H = 190;  // 게이지 높이(월드 px)
-  var GAUGE_W = 26;   // 게이지 폭
-
-  /** 게이지 사각형 {x, y, w, h}. 대포 왼쪽(뒤)에 세로로 세운다. */
-  function powerGauge(launch, ui) {
-    var u = ui || 1;
-    var w = GAUGE_W * u;
-    var h = GAUGE_H * u;
-    return { x: launch.x - 52 * u - w, y: launch.y + 6 - h, w: w, h: h };
-  }
-
-  /** 게이지 위에서 현재 힘의 손잡이 중심 y. 아래가 0, 위가 100. */
-  function powerHandleY(g, power) {
-    return g.y + g.h - (power / 100) * g.h;
-  }
-
-  /** 화면 y좌표를 힘(1~100)으로 되돌린다. 게이지를 끌거나 누를 때 쓴다. */
-  function powerFromY(g, y) {
-    var t = (g.y + g.h - y) / g.h;
-    return Math.max(1, Math.min(100, Math.round(t * 100)));
-  }
-
-  // ui는 작은 화면에서 손잡이를 키우는 배율(Scene.ui). 위치 계산을 app과 공유해야
-  // 하므로 여기 한 곳에 둔다.
+  // ui는 작은 화면에서 손잡이를 키우는 배율(Scene.ui). 손잡이 위치도 조금 밀어내
+  // 서로 겹치지 않게 한다. 위치 계산을 app과 공유해야 하므로 여기 한 곳에 둔다.
   function knobAngle(launch, angle, ui) {
     var a = (angle * Math.PI) / 180;
     var r = ARC_R;
     return { x: launch.x + Math.cos(a) * r, y: launch.y - Math.sin(a) * r };
   }
-  /** (구) 당김 손잡이 위치. 게이지 방식으로 바뀐 뒤에는 쓰지 않는다. */
+  /**
+   * 힘 손잡이는 대포 "뒤쪽 위"에 둔다. 포신 반대 방향(뒤아래)에 두면 각도가
+   * 높을 때 손잡이가 땅속으로 들어가고, 화면 아래·왼쪽 끝에 걸려 휴대폰에서
+   * 당길 공간이 없다. 뒤쪽 위는 하늘이라 당길 공간이 넉넉하다.
+   * 각도와 무관하게 고정된 자리에 둬서 매번 같은 곳을 잡으면 되게 했다.
+   */
   function knobPowerRest(launch, angle, ui) {
     var u = ui || 1;
     return { x: launch.x - 30 * u, y: launch.y - 18 * u };
@@ -440,68 +416,120 @@ var Renderer = (function () {
   }
 
   /**
-   * 힘 게이지. 항상 보이는 세로 막대 + 눈금 + 손잡이 + '힘' 라벨.
-   * 슬라이더처럼 생겨서, 처음 보는 사람도 끌거나 누르면 된다는 걸 안다.
-   * active면(조작 중) 손잡이와 테두리를 키워 잡고 있음을 알린다.
+   * 대포 뒤 힘 손잡이. 당기는 중이면 당긴 지점까지 밴드 + 충전 게이지.
+   * pulse(0~1)는 당기기 전에 보여줄 안내(고리·화살표·말풍선)의 숨쉬기 값이다.
    */
-  function drawPowerControl(ctx, launch, angle, power, mode, dragPoint, ui) {
+  function drawPowerControl(ctx, launch, angle, power, mode, dragPoint, ui, pulse) {
     ui = ui || 1;
-    var active = mode === 'power';
-    var g = powerGauge(launch, ui);
-
     ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    var rest = knobPowerRest(launch, angle, ui);
+    var handle = mode === 'power' && dragPoint ? dragPoint : rest;
 
-    // 틀
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.strokeStyle = active ? '#e8442e' : '#1c3d5a';
-    ctx.lineWidth = (active ? 3.5 : 2.5) * ui;
-    roundRect(ctx, g.x, g.y, g.w, g.h, 9 * ui);
-    ctx.fill();
-    ctx.stroke();
-
-    // 채움 (아래에서 위로)
-    var fillH = (power / 100) * (g.h - 6);
-    var grad = ctx.createLinearGradient(0, g.y + g.h, 0, g.y);
-    grad.addColorStop(0, '#ffd23f');
-    grad.addColorStop(1, '#e8442e');
-    ctx.fillStyle = grad;
-    roundRect(ctx, g.x + 3, g.y + g.h - 3 - fillH, g.w - 6, fillH, 6 * ui);
-    ctx.fill();
-
-    // 눈금 (25칸마다)
-    ctx.strokeStyle = 'rgba(28,61,90,0.35)';
-    ctx.lineWidth = 1.5 * ui;
-    for (var v = 25; v <= 75; v += 25) {
-      var ty = powerHandleY(g, v);
+    // 당기는 중이면 대포 뒤에서 손잡이까지 굵은 고무줄
+    if (mode === 'power') {
+      ctx.strokeStyle = 'rgba(232,68,46,0.75)';
+      ctx.lineWidth = 5 * ui;
+      ctx.setLineDash([7 * ui, 5 * ui]);
       ctx.beginPath();
-      ctx.moveTo(g.x + 2, ty);
-      ctx.lineTo(g.x + g.w * 0.42, ty);
+      ctx.moveTo(launch.x, launch.y);
+      ctx.lineTo(handle.x, handle.y);
       ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // 당기기 전에는 "여기를 당기라"는 표시를 낸다. 손잡이가 조작할 수 있는
+    // 것인 줄 모르는 게 첫 사용자의 가장 큰 벽이라, 눈에 띄게 알려준다.
+    // pulse(0~1)는 app이 넘기는 숨쉬기 애니메이션 값이다.
+    if (mode !== 'power') {
+      pulse = pulse || 0; // 0~1
+      var R = 11 * ui;
+
+      // 숨쉬는 고리
+      ctx.strokeStyle = 'rgba(232,68,46,' + (0.55 - pulse * 0.45).toFixed(3) + ')';
+      ctx.lineWidth = 3 * ui;
+      ctx.beginPath();
+      ctx.arc(handle.x, handle.y, R + (6 + pulse * 14) * ui, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 당기는 방향을 가리키는 화살표. 힘은 "당긴 거리"로 정해지므로 방향은
+      // 자유지만, 대포가 화면 왼쪽 아래에 있어 아래로는 땅에 막힌다.
+      // 공간이 넉넉한 왼쪽 위(하늘)를 가리켜 실제로 당길 수 있는 곳을 알린다.
+      var dx = -0.55, dy = -0.84;                   // 왼쪽 위
+      var s = (30 + pulse * 10) * ui;               // 숨쉬며 살짝 늘어난다
+      var ax = handle.x + dx * s, ay = handle.y + dy * s;
+      ctx.strokeStyle = '#e8442e';
+      ctx.lineWidth = 4 * ui;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(handle.x + dx * (R + 6 * ui), handle.y + dy * (R + 6 * ui));
+      ctx.lineTo(ax, ay);
+      ctx.stroke();
+      var pa = Math.atan2(dy, dx);
+      ctx.fillStyle = '#e8442e';
+      ctx.beginPath();
+      ctx.moveTo(ax + Math.cos(pa) * 9 * ui, ay + Math.sin(pa) * 9 * ui);
+      ctx.lineTo(ax - Math.cos(pa - 0.6) * 10 * ui, ay - Math.sin(pa - 0.6) * 10 * ui);
+      ctx.lineTo(ax - Math.cos(pa + 0.6) * 10 * ui, ay - Math.sin(pa + 0.6) * 10 * ui);
+      ctx.closePath();
+      ctx.fill();
+
+      // "당겨서 발사" 말풍선 — 손잡이 위쪽에 둔다
+      var label = '당겨서 발사';
+      ctx.font = 'bold ' + Math.round(14 * ui) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      var tw = ctx.measureText(label).width;
+      var bw = tw + 20 * ui, bh = 26 * ui;
+      var bx = handle.x - bw / 2, by = handle.y - (46 + pulse * 4) * ui - bh / 2;
+      ctx.fillStyle = '#e8442e';
+      roundRect(ctx, bx, by, bw, bh, 9 * ui);
+      ctx.fill();
+      // 말풍선 꼬리
+      ctx.beginPath();
+      ctx.moveTo(handle.x - 6 * ui, by + bh);
+      ctx.lineTo(handle.x + 6 * ui, by + bh);
+      ctx.lineTo(handle.x, by + bh + 8 * ui);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, handle.x, by + bh / 2);
     }
 
-    // 손잡이 (현재 값 위치) — 끌 수 있음을 알리는 ↕
-    var hy = powerHandleY(g, power);
-    var hx = g.x + g.w / 2;
-    var hr = (active ? 15 : 13) * ui;
-    ctx.fillStyle = active ? '#e8442e' : '#c8503a';
+    // 손잡이
+    ctx.fillStyle = mode === 'power' ? '#e8442e' : '#c86a4a';
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 3 * ui;
     ctx.beginPath();
-    ctx.arc(hx, hy, hr, 0, Math.PI * 2);
+    ctx.arc(handle.x, handle.y, (mode === 'power' ? 13 : 11) * ui, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold ' + Math.round(13 * ui) + 'px system-ui, sans-serif';
-    ctx.fillText('↕', hx, hy);
-
-    // '힘' 라벨 (게이지 아래)
-    ctx.fillStyle = '#1c3d5a';
-    ctx.font = 'bold ' + Math.round(15 * ui) + 'px system-ui, sans-serif';
-    ctx.fillText('힘', g.x + g.w / 2, g.y + g.h + 16 * ui);
-
+    ctx.font = 'bold ' + Math.round(12 * ui) + 'px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('힘', handle.x, handle.y);
     ctx.restore();
+
+    // 충전 게이지 — 대포 뒤쪽(왼쪽) 위로 세로 막대. 대포 입구·다이얼은 오른쪽
+    // 위에, 힘 당김은 대개 뒤아래에 있으므로 이 자리는 둘 다 가리지 않는다.
+    if (mode === 'power') {
+      var barW = 14 * ui, barH = 150;
+      var barX = launch.x - 34 * ui - barW;
+      var barBottom = launch.y - 4;
+      var top = barBottom - barH;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.strokeStyle = '#1c3d5a';
+      ctx.lineWidth = 2 * ui;
+      roundRect(ctx, barX, top, barW, barH, 6);
+      ctx.fill();
+      ctx.stroke();
+      var fillH = (power / 100) * (barH - 4);
+      var g = ctx.createLinearGradient(0, barBottom, 0, top);
+      g.addColorStop(0, '#ffd23f');
+      g.addColorStop(1, '#e8442e');
+      ctx.fillStyle = g;
+      roundRect(ctx, barX + 2, barBottom - 2 - fillH, barW - 4, fillH, 4);
+      ctx.fill();
+    }
   }
 
   /**
@@ -601,7 +629,7 @@ var Renderer = (function () {
     var mode = scene.drag ? scene.drag.mode : null;
     if (!scene.currentPath) {
       drawAngleDial(ctx, map.launch, scene.angle, mode === 'aim', ui);
-      drawPowerControl(ctx, map.launch, scene.angle, scene.power, mode, scene.drag && scene.drag.point, ui);
+      drawPowerControl(ctx, map.launch, scene.angle, scene.power, mode, scene.drag && scene.drag.point, ui, scene.pulse);
       // 각도·힘 숫자 판 — 좌상단 고정 (대포 입구를 가리지 않는다)
       drawReadout(ctx, scene.angle, scene.power, mode === 'power', mode, ui);
     }
@@ -613,15 +641,11 @@ var Renderer = (function () {
   return {
     Scene: Scene,
     WORLD: { w: W, h: H },
-    // 조준 컨트롤의 위치·변환 (app.js가 어디를 잡았는지 판정할 때 쓴다).
-    // 그림과 판정이 어긋나지 않도록 계산은 여기 한 곳에만 둔다.
+    // 조준 손잡이 위치·상수 (app.js가 어느 손잡이를 잡았는지 판정할 때 쓴다)
     ARC_R: ARC_R,
     MAX_PULL: MAX_PULL,
     knobAngle: knobAngle,
-    knobPowerRest: knobPowerRest,
-    powerGauge: powerGauge,
-    powerHandleY: powerHandleY,
-    powerFromY: powerFromY
+    knobPowerRest: knobPowerRest
   };
 })();
 
