@@ -8,7 +8,11 @@
 
 ## 바로 플레이
 
-**▶ https://biiinsb.github.io/science-fortress/**
+**▶ https://science-fortress.vercel.app/**
+
+휴대폰에서 "홈 화면에 추가"하면 앱처럼 아이콘으로 실행된다.
+(같은 저장소가 https://biiinsb.github.io/science-fortress/ 에도 배포되어 있고,
+랭킹은 같은 데이터베이스를 보므로 어느 주소로 들어와도 기록이 공유된다.)
 
 ## 실행
 
